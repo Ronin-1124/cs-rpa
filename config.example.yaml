@@ -1,0 +1,30 @@
+# Historical Windows adapter only. The local replica does not read this file.
+auto_send: false
+bridge_base: http://127.0.0.1:18080
+bridge_timeout_sec: 180
+poll_ms: 800
+log_dir: artifacts
+screenshot_after_fill: true
+dry_fill_text: "Local input test"
+
+qianniu:
+  process: AliWorkbench
+  window_title_contains: "接待中心"
+  notify_title: "消息提醒"
+  input_rel: {x: 0.394, y: 0.926}
+
+jingmai:
+  mode: web
+  process: jdm_dd_workbench
+  window_title_contains: "咚咚融合工作台"
+  notify_title: "新消息提醒"
+  input_rel: {x: 0.219, y: 0.640}
+  web:
+    url: https://dongdong.jd.com/
+    cdp_url: http://127.0.0.1:9222
+    user_data_dir: artifacts/chrome-jingmai
+    prefer_live_edge: true
+    headed: true
+    timeout_ms: 25000
+    login_wait_sec: 0
+    mock: false

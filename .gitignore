@@ -1,0 +1,20 @@
+__pycache__/
+*.pyc
+.venv/
+artifacts/
+config.local.yaml
+*.png
+
+# Machine-specific settings, credentials, and customer/business source data.
+/config.yaml
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.log
+/*.csv
+/openclaw-host/shop-faq.md
+/openclaw-host/SOUL.md
+/openclaw-host/style.md

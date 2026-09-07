@@ -1,0 +1,14 @@
+{
+  "agents": {
+    "defaults": {
+      "memorySearch": {
+        "fallback": "none",
+        "store": {
+          "vector": {
+            "enabled": false
+          }
+        }
+      }
+    }
+  }
+}
