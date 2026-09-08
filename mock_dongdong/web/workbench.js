@@ -6,7 +6,7 @@ const icon = name => `<i data-lucide="${name}"></i>`;
 const hydrateIcons = () => lucide.createIcons({attrs:{"stroke-width":1.25}});
 const editor = $(".EditorContent"), content = $(".c-c"), scroller = $(".c-wrap");
 let selected = sessionStorage.getItem("replica.customer") || "";
-let tab = Number(sessionStorage.getItem("replica.tab") || 1), state, cases = [], generation = 0;
+let tab = Number(sessionStorage.getItem("replica.tab") || 0), state, cases = [], generation = 0;
 let loadedBuyer = "", lastMessages = "", sending = false, loading = false, sendMode = localStorage.getItem("replica.sendMode") || "enter";
 let phraseTab = 0;
 const collapsed = new Set(), drafts = new Map(), pendingRequests = new Map();

@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>客服控制台 · CS RPA</title>
+  <link rel="stylesheet" href="/manage/app.css">
+  <script defer src="/lucide.min.js"></script><script defer src="/manage/app.js"></script>
+</head>
+<body>
+  <aside class="sidebar">
+    <a class="brand" href="/manage"><span class="brand-mark"><i data-lucide="sprout"></i></span><span>CS RPA<small>客服工作空间</small></span></a>
+    <div class="nav-label">工作台</div>
+    <nav aria-label="主导航">
+      <button class="nav-item active" data-view="overview"><i data-lucide="layout-dashboard"></i><span>运行总览</span></button>
+      <button class="nav-item" data-view="conversations"><i data-lucide="messages-square"></i><span>客户会话</span><b id="nav-count">0</b></button>
+      <button class="nav-item" data-view="tasks"><i data-lucide="clipboard-list"></i><span>同事待办</span></button>
+      <button class="nav-item" data-view="knowledge"><i data-lucide="book-open"></i><span>业务知识</span></button>
+      <div class="nav-label">工作空间设置</div>
+      <button class="nav-item" data-view="models"><i data-lucide="blocks"></i><span>模型配置</span></button>
+      <button class="nav-item" data-view="settings"><i data-lucide="settings-2"></i><span>接待设置</span></button>
+    </nav>
+    <div class="sidebar-footer"><span class="local-dot"></span><span>本机工作空间<small id="version">v0.2.0</small></span></div>
+  </aside>
+  <div class="workspace">
+    <header class="topbar"><div><span class="breadcrumb">工作空间</span><span class="slash">/</span><span id="page-name">运行总览</span></div><div class="topbar-right"><span id="connection" class="connection"><span class="local-dot"></span>正在连接</span><span class="avatar">客</span></div></header>
+    <main>
+      <section class="view" id="view-overview">
+        <div class="page-heading"><div><p class="eyebrow">SERVICE WORKSPACE</p><h1>运行总览</h1><p>掌握接待进度，随时与同事协同。</p></div><div class="heading-links"><a class="button secondary" href="/control" target="_blank" rel="noopener"><i data-lucide="user-round"></i>模拟客户</a><a class="button secondary" href="/workbench" target="_blank" rel="noopener"><i data-lucide="external-link"></i>模拟工作台</a></div></div>
+        <div class="stats"><article class="stat"><span class="stat-icon"><i data-lucide="messages-square"></i></span><span>已同步客户</span><strong id="stat-conversations">0</strong><small>按店铺独立保存</small></article><article class="stat"><span class="stat-icon"><i data-lucide="send"></i></span><span>已确认发送</span><strong id="stat-sent">0</strong><small>已在网页中核对</small></article><article class="stat"><span class="stat-icon"><i data-lucide="file-pen-line"></i></span><span>待审核回复</span><strong id="stat-drafts">0</strong><small>审核后进入发送队列</small></article><article class="stat"><span class="stat-icon"><i data-lucide="clipboard-list"></i></span><span>待同事处理</span><strong id="stat-tasks">0</strong><small>补充结果后继续接待</small></article></div>
+        <article class="runtime-card"><div class="runtime-main"><div class="runtime-title"><span class="runtime-symbol"><i data-lucide="radio"></i></span><div><span class="eyebrow">接待状态</span><h2 id="runtime-title">服务已就绪</h2></div><span class="badge" id="runtime-badge">未启动</span></div><p id="runtime-detail">配置接待方式后，即可开始读取客户消息。</p><div class="runtime-meta"><span><small>接入页面</small><b id="runtime-target">本地模拟</b></span><span><small>当前模型</small><b id="runtime-model">待配置</b></span><span><small>回复方式</small><b id="runtime-mode">审核后发送</b></span></div></div><div class="runtime-actions"><button class="button primary" data-command="start" id="start"><i data-lucide="play"></i>开始接待</button><div><button class="button secondary" data-command="pause" id="pause"><i data-lucide="pause"></i>暂停</button><button class="button quiet" data-command="stop" id="stop"><i data-lucide="square"></i>停止</button></div><small>停止时同步关闭接待浏览器</small></div></article>
+        <div class="overview-grid"><article class="panel"><div class="panel-heading"><h2>回复处理</h2><span class="muted">最近 100 条</span></div><div id="outbox"></div></article><article class="panel"><div class="panel-heading"><h2>运行记录</h2><i data-lucide="activity"></i></div><div id="events"></div><div class="panel-note"><i data-lucide="database"></i><span>会话与处理进度保存在本机，重启后可继续。</span></div></article></div>
+      </section>
+      <section class="view" id="view-conversations" hidden>
+        <div class="page-heading"><div><p class="eyebrow">CONVERSATIONS</p><h1>客户会话</h1><p>查看完整上下文，接管需要关注的咨询。</p></div></div>
+        <div class="conversation-layout panel"><aside id="conversation-list"></aside><section id="conversation-detail"><div class="empty"><i data-lucide="messages-square"></i><h3>选择一个客户</h3><p>开始接待后，网页中的客户与消息会同步到这里。</p></div></section></div>
+      </section>
+      <section class="view" id="view-tasks" hidden>
+        <div class="page-heading"><div><p class="eyebrow">TEAM INBOX</p><h1>同事待办</h1><p>查看已收集的需求，填写确认结果，让接待继续。</p></div><button class="button secondary" data-view="settings"><i data-lucide="bell"></i>通知设置</button></div>
+        <div id="task-list" class="task-grid"></div>
+      </section>
+      <section class="view" id="view-knowledge" hidden>
+        <div class="page-heading"><div><p class="eyebrow">KNOWLEDGE LIBRARY</p><h1>业务知识</h1><p>统一维护产品资料与客服话术，保留每一条信息的来源。</p></div><button class="button primary" id="add-knowledge"><i data-lucide="plus"></i>添加知识</button></div>
+        <div class="panel knowledge-toolbar"><label class="search"><i data-lucide="search"></i><input id="knowledge-search" placeholder="搜索问题、产品或话术"></label><span id="knowledge-count" class="muted"></span><button class="button secondary" id="import-project"><i data-lucide="folder-input"></i>同步项目资料</button><label class="button secondary upload"><i data-lucide="upload"></i>导入 CSV<input id="csv-file" type="file" accept=".csv" hidden></label></div>
+        <p class="help-note">历史话术仅作业务参考。实时库存、报价和交期须由同事确认。图片附件暂不作为可发送素材。</p>
+        <div class="panel" id="knowledge-list"></div>
+      </section>
+      <section class="view" id="view-models" hidden>
+        <div class="page-heading"><div><p class="eyebrow">MODEL CONNECTIONS</p><h1>模型配置</h1><p>管理 API 连接，选择当前接待使用的模型。</p></div><button class="button secondary" id="new-profile"><i data-lucide="plus"></i>新增配置</button></div>
+        <div class="settings-layout"><article class="panel"><div class="panel-heading"><h2>已保存的连接</h2></div><div id="profiles"></div></article><article class="panel"><div class="panel-heading"><h2 id="profile-form-title">编辑模型连接</h2><span class="badge neutral">本机保存</span></div><form id="profile-form" class="form"><input type="hidden" name="id"><label>配置名称<input name="name" required placeholder="例如：MiniMax 主模型"></label><div class="form-row"><label>接口协议<select name="protocol"><option value="anthropic">Anthropic Messages</option><option value="openai">OpenAI Chat Completions</option></select></label><label>模型名称<input name="model" required value="MiniMax-M3"></label></div><label>API 地址<input name="base_url" type="url" required placeholder="https://api.minimax.cn/anthropic"></label><label>API Key<input name="api_key" type="password" autocomplete="new-password" placeholder="填写新密钥，留空保留已保存密钥"><small>保存后不再显示密钥内容。</small></label><div class="form-row"><label>请求超时（秒）<input name="timeout" type="number" min="5" max="120" value="40" required></label><label>最大输出长度<input name="max_tokens" type="number" min="128" max="8192" value="1800" required></label></div><div class="form-footer"><span class="muted">修改前请先停止接待。</span><button class="button primary" type="submit"><i data-lucide="save"></i>保存连接</button></div></form></article></div>
+      </section>
+      <section class="view" id="view-settings" hidden>
+        <div class="page-heading"><div><p class="eyebrow">WORKSPACE SETTINGS</p><h1>接待设置</h1><p>选择网页来源、回复方式和同事协作渠道。</p></div></div>
+        <form id="settings-form" class="settings-form"><article class="panel"><div class="panel-heading"><h2>网页与回复</h2><span class="muted">修改前请先停止接待</span></div><div class="form"><div class="form-row"><label>接入环境<select name="transport"><option value="mock">本地模拟工作台</option><option value="jingmai">京东京麦 · 读取与草稿</option></select></label><label>店铺标识<input name="shop" required placeholder="例如：radxa-jd"></label></div><div class="form-row"><label>回复方式<select name="mode"><option value="draft">审核后发送</option><option value="auto">自动回复（模拟环境）</option></select></label><label>浏览器<select name="channel"><option value="msedge">Microsoft Edge</option><option value="chromium">Chromium</option><option value="chrome">Google Chrome</option></select></label></div><label>模拟工作台地址<input name="mock_url" type="url" required></label><label>京东网页地址<input name="jd_url" type="url" required></label><p class="help-note">京东环境会打开独立浏览器供您登录。本版可读取可见会话并生成草稿，真实网页自动发送尚未开放。</p><div class="form-row thirds"><label>轮询间隔（秒）<input name="poll_seconds" type="number" min="1" max="60"></label><label>连续消息等待（秒）<input name="merge_seconds" type="number" min="0" max="20"></label><label>每轮会话上限<input name="max_sessions" type="number" min="1" max="500"></label></div></div></article>
+        <article class="panel"><div class="panel-heading"><h2>定制需求收集</h2></div><div class="form"><p class="muted">收集以下信息后，创建同事待办。已提供的信息不会重复询问。</p><div id="custom-fields" class="checkbox-grid"></div><div class="persona-note"><i data-lucide="user-round-check"></i><div><b>客服同事的沟通方式</b><p>自然、温和、简洁地处理业务。协同时使用“同事”等称呼，查询与通知结果以实际执行记录为准。</p></div></div></div></article>
+        <article class="panel"><div class="panel-heading"><h2>飞书通知</h2><label class="switch-label"><input name="feishu_enabled" type="checkbox">启用通知</label></div><div class="form"><label>机器人 Webhook<input name="feishu_webhook" type="password" autocomplete="new-password" placeholder="未配置，留空保留已有设置"></label><label>签名密钥（可选）<input name="feishu_secret" type="password" autocomplete="new-password" placeholder="留空保留已有设置"></label><p class="help-note">启用后，新建待办会推送到此机器人。处理结果目前在“同事待办”页面填写。</p></div></article><div class="settings-save"><button class="button primary" type="submit"><i data-lucide="save"></i>保存接待设置</button></div></form>
+      </section>
+    </main>
+    <footer class="footer"><span>CS RPA · 本地客服工作空间</span><span>消息有记录，协作有进度。</span></footer>
+  </div>
+  <div id="toast" role="status" hidden></div>
+  <dialog id="knowledge-dialog"><form id="knowledge-form" class="form"><div class="panel-heading"><h2>添加业务知识</h2><button type="button" class="icon-button" id="close-dialog" aria-label="关闭"><i data-lucide="x"></i></button></div><label>标题<input name="title" required></label><label>适用产品<input name="product" placeholder="可选"></label><label>知识内容<textarea name="content" rows="7" maxlength="10000" required></textarea></label><button class="button primary" type="submit">保存知识</button></form></dialog>
+</body>
+</html>

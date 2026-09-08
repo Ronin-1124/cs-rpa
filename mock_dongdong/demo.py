@@ -4,8 +4,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
-import subprocess
-import sys
+import threading
 import time
 import urllib.parse
 import urllib.request
@@ -27,23 +26,22 @@ def api(path, body=None):
 
 
 def ensure_server():
+    owned = None
     try:
         health = api("/api/health")
     except OSError:
-        kwargs = {"creationflags": subprocess.CREATE_NO_WINDOW} if os.name == "nt" else {"start_new_session": True}
-        subprocess.Popen([sys.executable, "-X", "utf8", "-m", "mock_dongdong", "serve"],
-                         cwd=ROOT, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, **kwargs)
-        deadline = time.monotonic() + 15
-        while True:
-            try:
-                health = api("/api/health")
-                break
-            except OSError:
-                if time.monotonic() >= deadline:
-                    raise RuntimeError("Replica server failed to start")
-                time.sleep(.3)
+        from http.server import ThreadingHTTPServer
+        from mock_dongdong.server import Handler
+        from mock_dongdong.store import Store
+
+        handler = type('DemoHandler', (Handler,), {'store': Store()})
+        owned = ThreadingHTTPServer(('127.0.0.1', urllib.parse.urlparse(BASE).port or 18766), handler)
+        owned._demo_thread = threading.Thread(target=owned.serve_forever, daemon=True)
+        owned._demo_thread.start()
+        health = {'version': 2}
     if health.get("version") != 2:
         raise RuntimeError("Port 18766 is occupied by another server")
+    return owned
 
 
 def main(argv=None):
@@ -55,8 +53,9 @@ def main(argv=None):
     out = ROOT / "artifacts" / f"replica-v2-{stamp}"
     out.mkdir(parents=True)
     report = {"version": 2, "passed": False, "transport": "Playwright DOM", "cases": []}
+    owned_server = None
     try:
-        ensure_server()
+        owned_server = ensure_server()
         templates = json.loads((ROOT / "offline-templates.json").read_text(encoding="utf-8"))
         buyers = [f"离线验证-{stamp[-13:]}-{i}" for i in (1, 2)]
         for buyer in buyers:
@@ -157,6 +156,11 @@ def main(argv=None):
                 browser.close()
     except Exception as exc:
         report["error"] = str(exc)
+    finally:
+        if owned_server:
+            owned_server.shutdown()
+            owned_server.server_close()
+            owned_server._demo_thread.join()
     (out / "report.json").write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
     print(json.dumps(report, ensure_ascii=False), flush=True)
     print(f"Report: {out / 'report.json'}", flush=True)

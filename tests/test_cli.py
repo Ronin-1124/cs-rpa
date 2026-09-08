@@ -10,10 +10,11 @@ ROOT = Path(__file__).resolve().parents[1]
 
 class CliTests(unittest.TestCase):
     def test_help_without_site_packages(self):
-        for arguments in [[], ["serve"], ["demo"]]:
-            with self.subTest(command=arguments):
+        for module, arguments in [(module, args) for module in ('mock_dongdong', 'cs_rpa')
+                                  for args in ([], ['serve'], ['demo'])]:
+            with self.subTest(module=module, command=arguments):
                 result = subprocess.run(
-                    [sys.executable, "-S", "-m", "mock_dongdong", *arguments, "--help"],
+                    [sys.executable, "-S", "-m", module, *arguments, "--help"],
                     cwd=ROOT, capture_output=True, text=True, timeout=15,
                 )
                 self.assertEqual(result.returncode, 0, result.stderr)

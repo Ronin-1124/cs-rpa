@@ -1,2 +1,4 @@
-# Offline DOM regression only; the HTTP service uses the standard library.
-playwright>=1.49.0
+playwright==1.62.0
+langgraph==1.2.11
+langgraph-checkpoint-sqlite==3.1.1
+python-dotenv==1.2.3

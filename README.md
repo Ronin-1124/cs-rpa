@@ -1,56 +1,84 @@
 # cs-rpa
 
-京东咚咚网页客服的本地离线复刻与 Playwright DOM 自动化验证项目。
+Windows 优先的本地客服应用：Playwright 读取客服网页，LangGraph 编排业务流程，API 模型生成处理方案，SQLite 保存客户上下文和同事待办。管理页面、模拟客户控制台和测试工作台采用接近 Radxa 绿的统一配色。
 
-当前主要入口为基于真实页面 observation 重建的本地工作台 v2。服务使用合成客户和固定模板，不连接京东或 OpenClaw。旧 Windows UIA / 客户端探测代码保留用于历史研究，不属于新版模拟测试路径。
+## 启动
 
-## 快速开始
+Windows 10/11 x64，联网执行：
 
-Python 3.12：
-
-```sh
-python -m venv .venv
-# Activate the virtual environment for your platform, then:
-pip install -r requirements.txt
-python -m playwright install chromium
-python -m mock_dongdong serve
+```powershell
+.\setup.cmd
+.\run.cmd serve
 ```
 
-工作台：http://127.0.0.1:18766/workbench
+`setup.cmd` 安装项目依赖；没有项目虚拟环境时，通过 [uv 官方安装器](https://docs.astral.sh/uv/reference/installer/)下载项目内的 Python 3.12，无需预装 Python。下载的运行时位于 `artifacts/runtime/`，不修改系统 PATH。优先使用已安装的 Edge；没有 Edge 时安装 Chromium，需要在接待设置中选择 Chromium。第一次安装需要访问 Astral、GitHub 和 Python 包源。
 
-客户控制台：http://127.0.0.1:18766/control
+当前机器已经安装好依赖，直接运行 `run.cmd serve` 即可。
 
-可在 Codex 内置浏览器打开。HTTP 服务仅依赖 Python 标准库；Playwright 用于独立 DOM 回归。
+- 客服管理：<http://127.0.0.1:18766/manage>
+- 模拟客户：<http://127.0.0.1:18766/control>
+- 模拟工作台：<http://127.0.0.1:18766/workbench>
 
-## 验证
+服务只监听本机。按 Ctrl+C 停止服务及其接待浏览器；正在进行的模型请求会等待结束，默认超时 40 秒。端口已占用时拒绝启动第二个实例。也可使用 `run.cmd serve --port 18767` 或 `--data-dir artifacts/another-shop`。
 
-```sh
-python -m unittest discover -s tests -v
-python -m mock_dongdong demo --channel chromium
+其他系统可以自行建立 Python 3.12 虚拟环境，安装 `requirements.txt` 和 Playwright Chromium，再执行 `python -m cs_rpa serve`；尚未完成跨平台部署验证。
+
+## 第一次接待
+
+1. 打开“模型配置”，保存 API 协议、地址、模型名和密钥，测试连接。首次启动会从项目 `.env` 中的 `MINIMAX_*` 配置导入一个 MiniMax 连接，之后以管理页面保存的配置为准。
+2. 在“业务知识”导入 CSV 或添加知识。首次启动自动导入项目根目录的三种客服 CSV：电商 Q&A、客服宝话术、快捷短语。相同条目重复导入不会新增，保留文件名、行号和停用状态；不修改原表格。
+3. 在“接待设置”选择本地模拟环境。默认审核后发送，可切换为模拟环境自动回复。
+4. 点击“开始接待”，再从模拟客户控制台创建客户并发送问题。程序通过工作台 DOM 读取消息，回复出现在管理页面。
+5. 审核模式下可以修改草稿，点击“审核通过”后程序核对当前客户和最新消息，再从网页发送。
+6. 定制需求按字段逐步收集；需要同事确认的问题进入“同事待办”。提交处理结果后，正在运行的客服继续生成回复。会话支持“同事接管”和“恢复接待”。
+
+## 模型连接
+
+当前默认模型为 `MiniMax-M3`，使用国内 API。已实测以下两种配置可用：
+
+| 协议 | API 基础地址 | 程序追加路径 |
+| --- | --- | --- |
+| Anthropic Messages | `https://api.minimax.cn/anthropic` | `/v1/messages` |
+| OpenAI Chat Completions | `https://api.minimax.cn/v1` | `/chat/completions` |
+
+管理页面允许保存和切换多个兼容接口；填写基础地址，不要重复填写完整请求路径。MiniMax-M3 请求关闭 thinking，仅使用最终答复。不同供应商的私有扩展不保证兼容。
+
+业务角色固定为“店铺客服同事”，协作时称“同事”“负责售后的同事”，不用“转人工”等口吻。不虚构查询结果、实际库存、承诺或未执行的转交；模型按业务意图输出结构化方案，由程序检查依据、需求字段和发送状态。
+
+密钥保存在本机 `.env`（可选导入）和 `artifacts/app/business.sqlite3`，管理 API 不返回明文密钥。当前是本机文件存储，尚未接入 Windows 凭据管理器。这些数据以及原始 CSV 都被 Git 忽略。迁移时停止应用，再复制需要保留的数据目录；不要复制 `.venv`，在新机器重跑安装。
+
+## 同事协作与边界
+
+- 飞书支持自定义机器人 Webhook 和可选签名密钥，需在接待设置中显式启用。生成待办后发送一次通知；通知状态持久化，结果不明不会盲目重发。同事目前在本机管理页填写处理结果，尚未实现飞书卡片回调或跨机器远程管理。飞书接口用替身测试验证，未向真实机器人发送测试通知。
+- 原始聊天、已收集字段、待办与发送队列持久化；LangGraph 使用独立 SQLite 检查点保存等待状态。重新启动后可继续处理，但启动服务不会自动开始接待。
+- 新消息会使旧草稿过期；同事接管会阻止自动发送；发送确认丢失的回复标记为“待核对”，需核对网页后处理。
+- 无关请求引导回业务，重复无关请求和常见结束语不反复回答。此版本没有按客户计费、每日配额或完整反滥用评分。
+- 当前知识检索使用中文词片段与产品词匹配，没有向量库；历史保存完整，但单次模型上下文使用最近 60 条文字消息、最多 32000 字符及最近检索资料，不是无限上下文。
+
+## 真实网页接入状态
+
+保留 `jingmai` 接入：用独立浏览器配置目录打开 `https://dongdong.jd.com/`，由使用者完成登录，按已有 DOM 观察适配读取与草稿生成。**真实页面的登录、客户唯一 ID、分页与发送尚未现场验收，自动发送明确关闭**；即使审核通过也会返回草稿状态并说明原因。
+
+当前只处理 DOM 中已加载的文本消息。昵称是没有稳定 ID 时的临时标识，同名客户跳过；图片、附件、语音和完整历史分页没有接入。真实页面需要下一阶段逐项验证，不能把模拟环境通过视为真实平台已经上线。
+
+## 代码结构与验证
+
+- `cs_rpa/`：应用服务、业务存储、模型协议、知识导入、LangGraph 流程、浏览器运行器和绿色管理页面。
+- `deploy/setup.ps1`：Windows 环境安装实现，统一由根目录 `setup.cmd` 调用。
+- `mock_dongdong/`：本地复刻网页、隔离测试数据、旧模板 DOM 回归；不会连接京东。
+- `tests/`：单元测试与可选端到端测试，不依赖真实客户资料。
+- `legacy/`、`openclaw-host/`：保留的历史实验与独立设备桥接，当前应用不依赖它们。
+- `guide.md`：原始业务需求；实现细节和剩余边界见 [docs/architecture.md](docs/architecture.md)。
+
+```powershell
+.\.venv\Scripts\python.exe -m unittest discover -s tests -v
+.\.venv\Scripts\python.exe -m tests.service_smoke
+.\.venv\Scripts\python.exe -m tests.service_smoke --live-model
+.\run.cmd demo
 ```
 
-Windows 已安装 Edge 时可以直接 `python -m mock_dongdong demo`。默认无窗口执行，测试报告与截图位于 `artifacts/replica-v2-<timestamp>/`。详情及已知限制见 [OFFLINE-DEMO.md](OFFLINE-DEMO.md)；真实页面采集依据见 [jingmai-dom-observations.md](jingmai-dom-observations.md)。
+`service_smoke` 使用临时数据库和合成客户，通过浏览器测试管理页、审核发送、暂停恢复、定制协作、移动端布局；默认替代模型，不调用外部 API。`--live-model` 只将硬编码的虚构 TEST-1 资料和合成对话发给 `.env` 指定的模型，不导入项目 CSV。截图和报告位于 `artifacts/service-smoke/` 或 `artifacts/service-live-smoke/`。
 
-Windows 统一启动脚本为 `run.cmd`，优先使用项目 `.venv`，否则使用 PATH 中的 Python：`run.cmd serve` 启动服务，`run.cmd demo` 执行回归，`run.cmd --help` 查看所有命令。旧的 `run-*.cmd` 和根目录 Python 入口已合并，不再保留重复别名。
+旧模板回归详情见 [OFFLINE-DEMO.md](OFFLINE-DEMO.md)，真实 DOM 依据见 [jingmai-dom-observations.md](jingmai-dom-observations.md)。旧回归自行创建的服务现在随测试结束关闭，不再遗留后台进程。
 
-## 目录
-
-- `mock_dongdong/`：离线工作台、客户控制台、HTTP 服务和合成数据。
-- `mock_dongdong/rpa.py`：DOM 读取、模板匹配、输入和发送驱动。
-- `mock_dongdong/demo.py`：多客户与异常场景回归，通过 `python -m mock_dongdong demo` 执行。
-- `tests/`：存储层和命令入口测试。
-- `legacy/`：历史 Windows 客户端 / 浏览器适配实验；`legacy/probes/` 集中保存独立 UI 探测工具。入口迁移表见 [legacy/README.md](legacy/README.md)。
-- `openclaw-host/`：独立 OpenClaw 设备的历史桥接与知识配置工具。
-- `guide.md`：业务需求记录，未实现功能不代表已经可用。
-
-## 本地配置与数据
-
-仓库不包含运行日志、截图、浏览器用户数据、聊天记录、客服 CSV 原始资料和设备配置。内部客服知识及策略文件需自行部署；`openclaw-host` 下工具引用的业务资料不随代码发布。
-
-主线 DOM 回归依赖见 `requirements.txt`，历史 Windows 适配依赖单独放在 `legacy/requirements.txt`。使用历史入口前，将 `config.example.yaml` 复制为项目根目录的 `config.yaml` 并配置设备和服务地址；`legacy/config.py` 统一读取配置及可选的 `config.local.yaml` 浅层覆盖。默认示例关闭自动发送。新版离线服务不读取该配置。
-
-本地复刻只验证已覆盖的 DOM 与模拟交互，不代表真实平台发送、接待、未读、分页或所有前端状态已验证。
-
-## 第三方资源
-
-离线分发的 Lucide 0.468.0 图标库许可证见 `mock_dongdong/web/lucide.LICENSE`。头像和开发板示意图为本项目替代资源，不包含真实客户资料。
+离线 Lucide 图标库许可证见 `mock_dongdong/web/lucide.LICENSE`。

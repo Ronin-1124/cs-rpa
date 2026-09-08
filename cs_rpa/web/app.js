@@ -1,0 +1,118 @@
+"use strict";
+const $ = (s, r=document) => r.querySelector(s);
+const $$ = (s, r=document) => [...r.querySelectorAll(s)];
+const esc = v => String(v ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+const icon = name => `<i data-lucide="${name}"></i>`;
+const labels = {stopped:"未启动",starting:"启动中",running:"接待中",paused:"已暂停",stopping:"停止中",waiting_login:"等待登录",error:"需检查",active:"接待中",collecting:"收集需求",waiting:"等待同事",human:"同事接管",draft:"待审核",ready:"排队中",sending:"发送中",sent:"已发送",stale:"已过期",uncertain:"待核对",cancelled:"已取消",open:"待处理",resolved:"已完成",pending:"未通知",failed:"通知失败",ignored:"无需回复"};
+const fields = {product:"产品型号",requirements:"定制内容",quantity:"数量",deadline:"期望交期",contact:"联系方式",company:"公司或称呼"};
+const viewNames = {overview:"运行总览",conversations:"客户会话",tasks:"同事待办",knowledge:"业务知识",models:"模型配置",settings:"接待设置"};
+let state, activeView="overview", selectedCustomer="", initialized=false, toastTimer, historyVersion="", historyGeneration=0;
+const edits = new Map(), taskResults = new Map();
+function hydrate(){lucide.createIcons({attrs:{"stroke-width":1.7}});}
+function setHTML(el, html){if(el.contains(document.activeElement)&&document.activeElement.matches("textarea,input"))return;if(el.innerHTML!==html)el.innerHTML=html;}
+function badge(value){return `<span class="badge ${["error","uncertain","failed"].includes(value)?"error":["draft","waiting","open","waiting_login"].includes(value)?"warning":["stopped","cancelled","stale","human"].includes(value)?"neutral":""}">${esc(labels[value]||value)}</span>`;}
+function date(value){return new Date(value*1000).toLocaleString("zh-CN",{month:"2-digit",day:"2-digit",hour:"2-digit",minute:"2-digit"});}
+function empty(title, detail, symbol="inbox"){return `<div class="empty">${icon(symbol)}<h3>${esc(title)}</h3><p>${esc(detail)}</p></div>`;}
+function toast(message, error=false){clearTimeout(toastTimer);const el=$("#toast");el.textContent=message;el.classList.toggle("error",error);el.hidden=false;toastTimer=setTimeout(()=>el.hidden=true,error?9000:4500);}
+async function api(path, body){const response=await fetch('/api/manage/'+path,{method:body===undefined?'GET':'POST',headers:body===undefined?{}:{'Content-Type':'application/json','X-CS-RPA':'1'},body:body===undefined?undefined:JSON.stringify(body)});const value=await response.json();if(!response.ok)throw new Error(value.error||'请求失败');return value;}
+function showView(name){if(!viewNames[name])return;activeView=name;$$('.view').forEach(el=>el.hidden=el.id!==`view-${name}`);$$('.nav-item').forEach(el=>el.classList.toggle('active',el.dataset.view===name));$('#page-name').textContent=viewNames[name];if(name==='knowledge')loadKnowledge();if(name==='conversations')loadHistory(true);hydrate();}
+
+function render(){
+  const runtime=state.runtime;
+  $('#connection').innerHTML='<span class="local-dot"></span>本机已连接';
+  $('#version').textContent='v'+state.version;
+  for(const key of ['conversations','sent','drafts','tasks'])$('#stat-'+key).textContent=state.counts[key];
+  $('#nav-count').textContent=state.counts.conversations;
+  $('#runtime-title').textContent=({stopped:'服务已就绪',starting:'正在连接工作台',running:'正在接待客户',paused:'接待已暂停',stopping:'正在结束运行',waiting_login:'等待客服网页登录',error:'连接需要检查'})[runtime.state]||'客服接待';
+  $('#runtime-badge').outerHTML=badge(runtime.state).replace('<span ','<span id="runtime-badge" ');
+  $('#runtime-detail').textContent=runtime.detail;
+  $('#runtime-target').textContent=state.config.transport==='mock'?'本地模拟':'京东京麦';
+  $('#runtime-mode').textContent=state.config.mode==='auto'?'自动回复':'审核后发送';
+  const active=state.profiles.items.find(p=>p.id===state.profiles.active);
+  $('#runtime-model').textContent=active?.model||'尚未配置';
+  $('#start').disabled=runtime.running&&runtime.state!=='paused';
+  $('#start').innerHTML=icon('play')+(runtime.state==='paused'?'继续接待':'开始接待');
+  $('#pause').disabled=!['running','waiting_login'].includes(runtime.state);
+  $('#stop').disabled=!runtime.running||runtime.state==='stopping';
+  setHTML($('#events'),state.events.length?state.events.map(e=>`<div class="event"><span class="event-dot"></span><div><p>${esc(e.text)}</p><small>${date(e.created)}</small></div></div>`).join(''):empty('运行记录将在这里显示','开始接待后，可以在这里查看异常与恢复信息。','activity'));
+  renderReplies();renderConversations();renderTasks();renderProfiles();
+  if(!initialized){fillSettings();if(active)fillProfile(active);else fillProfile();initialized=true;}
+  if(activeView==='conversations')loadHistory();
+  hydrate();
+}
+function renderReplies(){
+  setHTML($('#outbox'),state.outbox.length?state.outbox.map(o=>`<div class="reply-card" data-id="${esc(o.id)}"><div class="card-title"><b>${esc(o.name)}</b>${badge(o.status)}<time>${date(o.created)}</time></div>${o.status==='draft'?`<textarea data-edit="${esc(o.id)}" aria-label="${esc(o.name)}的待审核回复" maxlength="2000">${esc(edits.get(o.id)??o.reply)}</textarea>`:`<p>${esc(o.reply)}</p>`}${o.reason?`<p class="reason">${esc(o.reason)}</p>`:''}<div class="card-actions">${o.status==='draft'?'<button class="button quiet" data-outbox="cancel">取消</button><button class="button primary" data-outbox="approve">审核通过</button>':o.status==='uncertain'?'<button class="button secondary" data-outbox="cancel">核对后取消</button><button class="button primary" data-outbox="confirmed">确认网页已发送</button>':''}</div></div>`).join(''):empty('暂无待处理回复','新消息生成的回复会出现在这里。审核模式下，确认后才会加入发送队列。','file-pen-line'));
+}
+function renderConversations(){
+  if(!selectedCustomer&&state.conversations.length)selectedCustomer=state.conversations[0].id;
+  setHTML($('#conversation-list'),state.conversations.length?state.conversations.map(c=>`<button class="customer-row ${c.id===selectedCustomer?'active':''}" data-customer="${esc(c.id)}"><b>${esc(c.name)}</b>${badge(c.state)}<small>${esc(c.shop)}</small></button>`).join(''):empty('暂无客户','开始接待后自动同步。'));
+}
+async function loadHistory(force=false){
+  if(!selectedCustomer)return;
+  const c=state?.conversations.find(c=>c.id===selectedCustomer);
+  if(!c)return;
+  const version=c.id+':'+c.latest_id+':'+c.state+':'+c.fields;
+  if(!force&&version===historyVersion)return;
+  const token=++historyGeneration;
+  try{
+    const data=await api('history?id='+encodeURIComponent(selectedCustomer));
+    if(token!==historyGeneration)return;
+    historyVersion=version;
+    const d=data.conversation;
+    $('#conversation-detail').innerHTML=`<div class="customer-detail-header"><div><h2>${esc(d.name)}</h2><p>${esc(d.shop)} · ${d.platform==='mock'?'模拟环境':'京东京麦'}</p></div><button class="button secondary" data-takeover="${d.state==='human'?'resume':'takeover'}">${d.state==='human'?'恢复接待':'同事接管'}</button></div><div class="chat-history">${data.messages.map(m=>`<div class="chat-turn ${m.role==='agent'?'agent':''}"><small>${m.role==='agent'?'客服同事':m.role==='customer'?'客户':'系统'} · ${esc(m.timestamp)}</small><p>${esc(m.text)}</p></div>`).join('')}</div>${Object.keys(d.fields).length?`<dl class="customer-fields">${Object.entries(d.fields).map(([k,v])=>`<dt>${esc(fields[k]||k)}</dt><dd>${esc(v)}</dd>`).join('')}</dl>`:''}`;
+    const box=$('.chat-history');box.scrollTop=box.scrollHeight;hydrate();
+  }catch(e){toast(e.message,true);}
+}
+function renderTasks(){
+  setHTML($('#task-list'),state.tasks.length?state.tasks.map(t=>{let values={};try{values=JSON.parse(t.fields);}catch{}return `<article class="panel task" data-id="${esc(t.id)}"><div class="card-title"><b>${esc(t.name)}</b>${badge(t.status)}<time>${date(t.created)}</time></div><p class="summary">${esc(t.summary)}</p>${Object.keys(values).length?`<dl>${Object.entries(values).map(([k,v])=>`<dt>${esc(fields[k]||k)}</dt><dd>${esc(v)}</dd>`).join('')}</dl>`:''}<small>飞书通知：${esc(labels[t.notification]||t.notification)} · 待办 ${esc(t.id.slice(0,8))}</small>${t.status==='open'?`<textarea data-result="${esc(t.id)}" aria-label="${esc(t.name)}的处理结果" placeholder="填写已确认的结果，客服会据此继续回复客户…" maxlength="5000">${esc(taskResults.get(t.id)||'')}</textarea><div class="card-actions"><button class="button primary" data-resolve>提交处理结果</button></div>`:`<p class="summary">${esc(t.result||'')}</p>${t.status==='ready'?'<small>已保存，开始或继续接待后处理。</small>':''}`}</article>`}).join(''):empty('当前没有待办','需要同事确认的问题，以及收集完整的定制需求，会自动汇总到这里。','clipboard-check'));
+}
+function renderProfiles(){
+  setHTML($('#profiles'),state.profiles.items.length?state.profiles.items.map(p=>`<div class="profile" data-id="${esc(p.id)}"><h3>${esc(p.name)}${p.id===state.profiles.active?'<span class="badge">当前使用</span>':''}</h3><p>${esc(p.model)} · ${p.protocol==='anthropic'?'Anthropic':'OpenAI'}</p><p>${esc(p.base_url)}</p><div class="card-actions"><button class="button secondary" data-profile="edit">编辑</button><button class="button secondary" data-profile="test">测试连接</button>${p.id!==state.profiles.active?'<button class="button quiet" data-profile="activate">启用</button>':''}</div></div>`).join(''):empty('添加第一个模型连接','填写 API 地址与密钥，测试通过后即可开始接待。','blocks'));
+}
+function fillProfile(profile={}){
+  const form=$('#profile-form');form.reset();
+  for(const key of ['id','name','protocol','base_url','model','timeout','max_tokens'])if(profile[key]!==undefined)form.elements.namedItem(key).value=profile[key];
+  if(!profile.id){form.elements.base_url.value='https://api.minimax.cn/anthropic';form.elements.model.value='MiniMax-M3';}
+  form.elements.api_key.value='';form.elements.api_key.required=!profile.has_key;
+  $('#profile-form-title').textContent=profile.id?'编辑模型连接':'新增模型连接';
+}
+function fillSettings(){
+  const form=$('#settings-form');
+  for(const [key,value] of Object.entries(state.config)){
+    const input=form.elements.namedItem(key);if(!input)continue;
+    if(input.type==='checkbox')input.checked=Boolean(value);else input.value=value;
+  }
+  form.elements.feishu_webhook.placeholder=state.config.has_feishu_webhook?'已保存，留空保留':'填写机器人 Webhook';
+  form.elements.feishu_secret.placeholder=state.config.has_feishu_secret?'已保存，留空保留':'可选：机器人签名密钥';
+  $('#custom-fields').innerHTML=Object.entries(fields).map(([key,label])=>`<label><input type="checkbox" name="custom_field" value="${key}" ${state.config.custom_fields.includes(key)?'checked':''}>${label}</label>`).join('');
+}
+async function loadKnowledge(){
+  try{const data=await api('knowledge?q='+encodeURIComponent($('#knowledge-search').value));$('#knowledge-count').textContent=`启用 ${state?.counts.knowledge??0} 条`;
+    $('#knowledge-list').innerHTML=data.items.length?data.items.map(k=>{let sources=[];try{sources=JSON.parse(k.sources);}catch{}return `<article class="knowledge-item ${k.enabled?'':'disabled'}"><div><h3>${esc(k.title)}</h3>${k.product?`<span class="badge neutral">${esc(k.product)}</span>`:''}<details><summary>查看知识内容</summary><p>${esc(k.content)}</p></details><small>${sources.map(s=>esc(s.file)+' · 第 '+s.row+' 行').join('；')}</small></div><button class="button quiet" data-knowledge="${esc(k.id)}" data-enabled="${k.enabled?'0':'1'}">${k.enabled?'停用':'启用'}</button></article>`}).join(''):empty('没有找到知识条目','导入客服 CSV，或手动添加已确认的产品与业务资料。','book-open');hydrate();
+  }catch(e){toast(e.message,true);}
+}
+async function refresh(){state=await api('state');render();}
+async function perform(button, work){button.disabled=true;try{await work();await refresh();}catch(e){toast(e.message,true);}finally{if(button.isConnected){button.disabled=false;if(button.dataset.command&&state)render();}}}
+document.addEventListener('click',e=>{
+  const view=e.target.closest('[data-view]');if(view){showView(view.dataset.view);return;}
+  const button=e.target.closest('button');if(!button)return;
+  if(button.dataset.command)perform(button,async()=>{await api('runtime/'+button.dataset.command,{});});
+  if(button.dataset.customer){selectedCustomer=button.dataset.customer;renderConversations();loadHistory(true);}
+  if(button.dataset.takeover)perform(button,async()=>{await api('conversation',{id:selectedCustomer,action:button.dataset.takeover});historyVersion='';});
+  if(button.dataset.outbox)perform(button,async()=>{const id=button.closest('[data-id]').dataset.id;await api('outbox',{id,action:button.dataset.outbox,...(edits.has(id)?{reply:edits.get(id)}:{})});edits.delete(id);toast(button.dataset.outbox==='approve'?'已加入发送队列；运行接待时将核对并发送。':'已保存处理结果');});
+  if(button.hasAttribute('data-resolve'))perform(button,async()=>{const id=button.closest('[data-id]').dataset.id;const result=taskResults.get(id)||'';if(!result.trim())throw new Error('请先填写处理结果');await api('tasks/resolve',{id,result});taskResults.delete(id);toast('处理结果已保存，运行接待时继续处理。');});
+  if(button.dataset.profile){const id=button.closest('[data-id]').dataset.id;if(button.dataset.profile==='edit')fillProfile(state.profiles.items.find(p=>p.id===id));else perform(button,async()=>{const result=await api('profiles/'+button.dataset.profile,{id});if(button.dataset.profile==='test')toast(result.ok?`${result.model} 连接正常 · ${result.seconds} 秒`:'接口已返回，但测试内容未符合预期',!result.ok);else toast('已切换当前模型');});}
+  if(button.dataset.knowledge)perform(button,async()=>{await api('knowledge/toggle',{id:button.dataset.knowledge,enabled:button.dataset.enabled==='1'});await loadKnowledge();});
+});
+document.addEventListener('input',e=>{if(e.target.dataset.edit)edits.set(e.target.dataset.edit,e.target.value);if(e.target.dataset.result)taskResults.set(e.target.dataset.result,e.target.value);});
+$('#profile-form').addEventListener('submit',e=>{e.preventDefault();perform($('button[type=submit]',e.target),async()=>{const data=Object.fromEntries(new FormData(e.target));const saved=await api('profiles/save',data);e.target.elements.id.value=saved.id;e.target.elements.api_key.value='';e.target.elements.api_key.required=false;toast('模型连接已保存');});});
+$('#new-profile').addEventListener('click',()=>fillProfile());
+$('#settings-form').addEventListener('submit',e=>{e.preventDefault();perform($('button[type=submit]',e.target),async()=>{const form=new FormData(e.target);const data=Object.fromEntries(form);data.custom_fields=form.getAll('custom_field');data.feishu_enabled=e.target.elements.feishu_enabled.checked;delete data.custom_field;await api('settings',data);e.target.elements.feishu_webhook.value='';e.target.elements.feishu_secret.value='';toast('接待设置已保存，下次启动生效');});});
+$('#import-project').addEventListener('click',e=>perform(e.currentTarget,async()=>{const data=await api('knowledge/import-project',{});toast(data.results.map(r=>r.error?`${r.file}：${r.error}`:`${r.file}：新增 ${r.inserted}，重复 ${r.duplicates}`).join('；')||'项目根目录没有 CSV 文件');await loadKnowledge();}));
+$('#csv-file').addEventListener('change',async e=>{const file=e.target.files[0];if(!file)return;try{if(file.size>4000000)throw new Error('请选择 4 MB 以内的文件');const bytes=await file.arrayBuffer();let text;try{text=new TextDecoder('utf-8',{fatal:true}).decode(bytes);}catch{text=new TextDecoder('gb18030').decode(bytes);}const data=await api('knowledge/import',{filename:file.name,text});toast(`新增 ${data.inserted} 条，跳过 ${data.duplicates} 条重复记录。`);await refresh();await loadKnowledge();}catch(err){toast(err.message,true);}finally{e.target.value='';}});
+let searchTimer;$('#knowledge-search').addEventListener('input',()=>{clearTimeout(searchTimer);searchTimer=setTimeout(loadKnowledge,250);});
+$('#add-knowledge').addEventListener('click',()=>$('#knowledge-dialog').showModal());
+$('#close-dialog').addEventListener('click',()=>$('#knowledge-dialog').close());
+$('#knowledge-form').addEventListener('submit',e=>{e.preventDefault();perform($('button[type=submit]',e.target),async()=>{await api('knowledge/save',Object.fromEntries(new FormData(e.target)));e.target.reset();$('#knowledge-dialog').close();await loadKnowledge();toast('知识已保存');});});
+hydrate();
+(async function poll(){try{await refresh();}catch{const el=$('#connection');el.textContent='连接中断';}setTimeout(poll,2000);})();
