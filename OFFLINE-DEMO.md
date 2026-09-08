@@ -19,15 +19,15 @@
 
 客户控制台可以创建客户、选择模板并发送客户消息。工作台通过轮询收到列表更新；历史咨询、联系人搜索、仅未读过滤、分组折叠、切换会话、草稿恢复、快捷话术填入、表情、Enter / Ctrl+Enter 发送菜单和发送回复可用。每个浏览器标签独立保存选中客户及草稿。
 
-控制台不会自动回复。`replica_rpa.py` 只通过 Playwright 定位、读取、填写、点击，代码中不调用消息 API，也不连接 OpenClaw。`offline_demo.py` 注入两位合成客户的三次问题，并调用这个驱动回复，通过本地 API核对实际存储结果。
+控制台不会自动回复。`mock_dongdong/rpa.py` 只通过 Playwright 定位、读取、填写、点击，代码中不调用消息 API，也不连接 OpenClaw。`mock_dongdong/demo.py` 注入两位合成客户的三次问题，并调用这个驱动回复，通过本地 API核对实际存储结果。
 
 ```powershell
-.venv\Scripts\python.exe -X utf8 offline_demo.py
+.venv\Scripts\python.exe -X utf8 -m mock_dongdong demo
 ```
 
 默认测试浏览器无窗口，不会打开外部 Edge 窗口。Codex 中仍可查看相同服务的数据。需要显式独立窗口时才传 `--headed`。Windows 默认使用已安装的 Edge；Linux 默认 Chromium，安装依赖：`pip install playwright`、`python -m playwright install --with-deps chromium`。Windows UIA 旧依赖不属于新版离线服务的必要条件。
 
-`run-offline-demo.cmd`、`run-jm-mock.cmd` 与 `probe_jm_playwright.py` 都使用新版验证流程。旧的 `run_cs.py --mock` 入口已停用。
+统一入口为 `python -m mock_dongdong demo`，Windows 也可使用 `run.cmd demo`。原 `run-offline-demo.cmd`、`run-jm-mock.cmd` 与 `probe_jm_playwright.py` 重复入口已移除。历史客户端脚本已归入 `legacy/`，旧 UIA 模拟流程不再提供。
 
 ## 复刻边界
 
@@ -43,6 +43,6 @@
 
 每次运行将结果写到 `artifacts/replica-v2-<时间>/report.json`，附桌面和窄屏截图。覆盖多客户三次回复、刷新后不重复回复、草稿恢复、两个窗口独立选中、快速切换、发送确认丢失后重试去重、Enter 发送、文本转义、商品错误卡片/系统消息/分隔线，以及页面错误和外部请求检查。驱动直接使用 observation 的类名，未重新添加旧的 `#header`、`#wrap`、`#editor`、`#send` 或人工 ARIA role。
 
-存储层额外测试：`python -m unittest test_replica_store -v`，验证已读请求不清除之后到达的新消息、发送重试绑定客户且不会重复，以及重置保持修订号递增。
+单元测试：`python -m unittest discover -s tests -v`，验证已读请求不清除之后到达的新消息、发送重试绑定客户且不会重复、重置保持修订号递增及命令入口可用。
 
 2026-09-07 在 Codex 内置浏览器也实际完成了客户控制台创建客户、发送模板问题、工作台 DOM 读取问题及填入模板、点击发送，并核对控制台与工作台出现同一条回复。此项为浏览器操作验证；独立 RPA 驱动的回归结果见上述 report.json。

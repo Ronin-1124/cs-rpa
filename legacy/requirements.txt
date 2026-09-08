@@ -1,0 +1,7 @@
+-r ../requirements.txt
+uiautomation>=2.0.18
+pywin32>=306
+pillow>=10.0.0
+pyyaml>=6.0.1
+requests>=2.31.0
+winocr>=0.0.15

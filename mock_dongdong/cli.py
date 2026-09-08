@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 import urllib.parse
 import urllib.request
@@ -19,6 +20,9 @@ def main(argv=None):
     serve = sub.add_parser("serve")
     serve.add_argument("--host", default="127.0.0.1")
     serve.add_argument("--port", type=int, default=DEFAULT_PORT)
+    demo = sub.add_parser("demo", help="run the local Playwright DOM regression")
+    demo.add_argument("--headed", action="store_true")
+    demo.add_argument("--channel", default="msedge" if os.name == "nt" else "chromium")
     create = sub.add_parser("create")
     create.add_argument("--name", default="")
     send = sub.add_parser("send")
@@ -30,6 +34,10 @@ def main(argv=None):
     sub.add_parser("sessions")
     sub.add_parser("reset", help="replace v2 data with synthetic history fixtures")
     args = parser.parse_args(argv)
+    if args.cmd == "demo":
+        from mock_dongdong.demo import main as run_demo
+
+        return run_demo(["--channel", args.channel] + (["--headed"] if args.headed else []))
     if args.cmd == "serve":
         from mock_dongdong.server import serve as start_server
         start_server(args.host, args.port)
