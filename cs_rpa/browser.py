@@ -8,6 +8,7 @@ from pathlib import Path
 from urllib.parse import urlparse
 
 from playwright.sync_api import expect, sync_playwright
+from playwright._impl._errors import TargetClosedError
 
 ROWS = '.c_tabs-tabpane:not(.c_tabs-tab_inactive) .alluser-item:visible'
 EDITOR = '.EditorContent[contenteditable=true]'
@@ -146,11 +147,21 @@ class BrowserAdapter:
         return 'uncertain', '发送结果未确认，请核对网页后处理；不会自动重发'
 
     def close(self):
+        def release(callback):
+            try:
+                callback()
+            except Exception as exc:
+                # Ctrl+C may terminate either Chromium or its Playwright driver first.
+                if not isinstance(exc, TargetClosedError) and not str(exc).endswith(
+                    'Connection closed while reading from the driver'
+                ):
+                    raise
+
+        context, playwright = self.context, self.playwright
+        self.context = self.page = self.playwright = None
         try:
-            if self.context:
-                self.context.close()
+            if context:
+                release(context.close)
         finally:
-            self.context = self.page = None
-            if self.playwright:
-                self.playwright.stop()
-                self.playwright = None
+            if playwright:
+                release(playwright.stop)
