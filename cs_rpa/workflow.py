@@ -20,13 +20,22 @@ PERSONA = """你的业务身份是店铺客服同事。以第一人称“我”�
 特殊报价、批量优惠和复杂售后需要同事处理；定制需求先收集缺失字段。
 不得声称已通知、已查库存、已转交，除非上下文明确记录已执行成功。
 只输出一个 JSON 对象，结构如下：
-{"intent":"consult|custom|quote|after_sales|offtopic|closing","reply":"给客户的简短回复",
+{"intent":"greeting|thanks|consult|custom|quote|after_sales|offtopic|closing","reply":"给客户的简短回复",
 "fields":{"product":"","requirements":"","quantity":"","deadline":"","contact":"","company":""},
 "need_colleague":false,"reason":"处理理由","evidence_ids":["实际使用的知识条目id"]}。
-fields 只提取客户明确提供的信息，不得猜测。缺乏回答依据时 need_colleague=true。
+fields 只提取客户明确提供的信息，不得猜测。业务问题缺乏回答依据时 need_colleague=true。
+单纯问候、询问客服是否在或催促回应属于 greeting，不需要知识引用或同事介入。
+如果还有未回答的具体业务问题，应继续处理该问题，不要因为最后一句是问候或催促而忽略问题。
 正在收集定制需求时，客户补充数量、交期或联系方式仍属于 custom，不要当作独立普通咨询。
+单纯致谢属于 thanks；致谢中同时提出新问题时，优先处理新问题，不要作为结束语。
+报价咨询属于 quote，先收集产品型号、采购数量和联系渠道；客户选择在当前会话联系也可以。
+collection_intent 表示正在收集哪类需求，客户补充字段时继续该流程；客户明确切换问题时按新问题处理。
 普通业务咨询只引用真正适用于当前问题的资料。员工补充的处理结果也是有效依据。
+先核对具体型号、变体、系统版本和配件条件。共享文档表格中的不同列不能互相替代。
+保留原文中的否定、限制和未实测说明；不要根据未读取的图片猜测操作，也不要把旧话术当现行承诺。
 """
+
+THANKS_REPLY = '客气了，有需要随时联系我。'
 
 
 class State(TypedDict, total=False):
@@ -40,6 +49,7 @@ class State(TypedDict, total=False):
     reply: str
     action: str
     task_id: str
+    collection_intent: str
 
 
 class Workflow:
@@ -67,10 +77,26 @@ class Workflow:
         return {'evidence': self.knowledge.search(query)}
 
     def plan(self, state):
-        last = next((m['text'] for m in reversed(state['messages']) if m['role'] == 'customer'), '')
-        compact = re.sub(r'[\s，。！!~～]', '', last)
-        if not state.get('employee_result') and compact in ('谢谢', '好的', '好', '收到', '谢谢你', '嗯', 'OK', 'ok', '再见'):
-            return {'plan': {'intent': 'closing', 'fields': {}, 'reply': '', 'reason': '结束语无需重复回复'}}
+        unanswered = []
+        for message in reversed(state['messages']):
+            if message['role'] == 'agent':
+                break
+            if message['role'] == 'customer':
+                unanswered.append(message['text'])
+        greetings = {'你好', '您好', 'hi', 'hello', '在吗', '在不在', '有人吗', '有人在吗',
+                     '客服在吗', '客服呢', '还在吗', '没人吗', '不是工作日吗没人吗'}
+        def is_greeting(text):
+            compact = re.sub(r'[\s，,。.!！?？~～]', '', text).lower()
+            return compact in greetings or (not compact and bool(re.search(r'[?？]', text)))
+
+        # Inspect the whole unanswered turn so a nudge cannot hide a product question.
+        if not state.get('employee_result') and unanswered and all(map(is_greeting, unanswered)):
+            return {'plan': {'intent': 'greeting', 'fields': {}, 'reason': '回应问候或询问是否在线'}}
+        compact_turn = [re.sub(r'[\s，,。.!！~～]', '', text).lower() for text in unanswered]
+        closing = r'(?:(?:好的|好|嗯|谢谢(?:你|您|客服)?|感谢(?:你|您|客服)?|多谢|收到|辛苦了|再见|ok))+'
+        if not state.get('employee_result') and compact_turn and all(re.fullmatch(closing, text) for text in compact_turn):
+            intent = 'thanks' if any(re.search(r'谢谢|感谢|多谢|辛苦', text) for text in compact_turn) else 'closing'
+            return {'plan': {'intent': intent, 'fields': {}, 'reply': '', 'reason': '回应首次致谢，避免反复客套'}}
         history, remaining = [], 32000
         for message in reversed(state['messages'][-60:]):
             if remaining <= 0:
@@ -80,6 +106,7 @@ class Workflow:
             remaining -= len(text)
         context = {'history': list(reversed(history)), 'confirmed_fields': state.get('fields', {}),
                    'conversation_state': self.db.conversation(state['conversation_id'])['state'],
+                   'collection_intent': state.get('collection_intent', ''),
                    'knowledge': state.get('evidence', []), 'colleague_result': state.get('employee_result', ''),
                    'custom_required_fields': self.settings.runtime()['custom_fields']}
         return {'plan': self.model_factory(self.settings.profile()).plan(PERSONA, context)}
@@ -87,7 +114,7 @@ class Workflow:
     def validate(self, state):
         plan = state['plan']
         intent = plan.get('intent')
-        if intent not in ('consult', 'custom', 'quote', 'after_sales', 'offtopic', 'closing'):
+        if intent not in ('greeting', 'thanks', 'consult', 'custom', 'quote', 'after_sales', 'offtopic', 'closing'):
             raise ModelError('模型意图格式错误，本轮未发送')
         fields = dict(state.get('fields', {}))
         extracted = plan.get('fields') or {}
@@ -99,17 +126,26 @@ class Workflow:
                 fields[key] = value.strip()[:500]
         reply = str(plan.get('reply') or '').strip()
         action = 'reply'
-        if intent == 'closing':
+        if intent == 'greeting':
+            # A social acknowledgement cannot introduce unsupported product facts.
+            reply = '在的，您想了解哪款产品，或者需要我帮您处理什么问题？'
+        elif intent == 'thanks':
+            last_agent = next((m['text'] for m in reversed(state['messages']) if m['role'] == 'agent'), '')
+            action, reply = ('ignore', '') if last_agent == THANKS_REPLY else ('reply', THANKS_REPLY)
+        elif intent == 'closing':
             action, reply = 'ignore', ''
         elif intent == 'offtopic':
             reply = '我这边主要帮您处理产品、订单和售后问题，您有这方面需要了解的吗？'
             if any(m['role'] == 'agent' and m['text'] == reply for m in state['messages'][-6:]):
                 action, reply = 'ignore', ''
-        elif intent == 'custom' and not state.get('employee_result'):
-            missing = [FIELD_LABELS[f] for f in self.settings.runtime()['custom_fields'] if not fields.get(f)]
+        elif intent in ('custom', 'quote') and not state.get('employee_result'):
+            required = ['product', 'quantity', 'contact'] if intent == 'quote' else self.settings.runtime()['custom_fields']
+            missing = [FIELD_LABELS[f] for f in required if not fields.get(f)]
             if missing:
                 action = 'collect'
-                reply = '方便再提供一下' + '、'.join(missing[:3]) + '吗？我先把需求整理完整。'
+                reply = '方便再提供一下' + '、'.join(missing[:3]) + '吗？' + ('我先确认报价需求。' if intent == 'quote' else '我先把需求整理完整。')
+                if intent == 'quote' and 'contact' in required and not fields.get('contact'):
+                    reply += '联系渠道也可以选择就在当前会话沟通。'
             else:
                 action = 'handoff'
         elif not state.get('employee_result'):
@@ -120,7 +156,7 @@ class Workflow:
             if plan.get('need_colleague') or intent in ('quote', 'after_sales') or not (set(cited) & known):
                 action = 'handoff'
         if action == 'handoff':
-            reply = '这个需要负责的同事进一步确认，我先把您的问题和需求整理好。'
+            reply = '这个需要进一步确认，我帮您看看，稍等。'
         for old, new in [('转人工', '请同事协助'), ('找人工', '找同事'), ('人工客服', '客服同事')]:
             reply = reply.replace(old, new)
         if action != 'ignore' and (not reply or len(reply) > 2000):
@@ -133,12 +169,16 @@ class Workflow:
             current = self.db.conversation(cid)
             if current['state'] == 'human' or current['latest_id'] != state['source_id']:
                 return {}
-            self.db.set_state(cid, 'collecting' if state['action'] == 'collect' else 'active', state['fields'])
+            next_state = 'collecting' if state['action'] == 'collect' else 'active'
+            if state['plan'].get('intent') in ('greeting', 'thanks', 'closing') and current['state'] == 'collecting':
+                next_state = 'collecting'
+            self.db.set_state(cid, next_state, state['fields'])
             status = 'ignored' if state['action'] == 'ignore' else ('ready' if self.settings.runtime()['mode'] == 'auto' else 'draft')
             self.db.prepare_reply(cid, state['source_id'], state['reply'], status,
                                   str(state['plan'].get('reason') or ''), state['plan'].get('evidence_ids', []),
                                   replace_draft=bool(state.get('employee_result')))
-            return {}
+            return {'collection_intent': state['plan']['intent'] if state['action'] == 'collect' else
+                    (state.get('collection_intent', '') if next_state == 'collecting' else '')}
 
 
     def create_task(self, state):

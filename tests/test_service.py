@@ -123,6 +123,63 @@ class ServiceCase(unittest.TestCase):
         self.assertEqual(self.db.conversation(self.cid)['state'], 'human')
         self.assertEqual(self.db.rows('SELECT * FROM outbox'), [])
 
+    def test_greetings_and_nudges_do_not_require_model_or_knowledge(self):
+        self.cid, _ = self.db.ingest('mock', 'shop', 'greeting', 'a', [
+            {'id': 'g1', 'role': 'customer', 'text': '你好'},
+            {'id': 'g2', 'role': 'customer', 'text': '客服在吗'},
+            {'id': 'g3', 'role': 'customer', 'text': '？？？'},
+            {'id': 'g4', 'role': 'customer', 'text': '不是工作日吗，没人吗'},
+        ])
+        self.db.execute('UPDATE knowledge SET enabled=0')
+        graph = self.graph(callback=lambda context: self.fail('问候不应调用模型'))
+        graph.invoke(self.value(), self.config)
+        reply = self.db.one('SELECT * FROM outbox')
+        self.assertEqual(reply['source_id'], 'g4')
+        self.assertEqual(reply['status'], 'draft')
+        self.assertIn('在的', reply['reply'])
+        self.assertEqual(self.db.conversation(self.cid)['state'], 'active')
+        self.assertFalse(self.db.rows('SELECT * FROM tasks'))
+        self.assertEqual(graph.get_state(self.config).next, ())
+
+    def test_greeting_keeps_custom_collection_state(self):
+        self.db.set_state(self.cid, 'collecting', {'product': 'TEST-1'})
+        self.db.ingest('mock', 'shop', 'customer-1', '客户甲', [
+            {'id': 'a1', 'role': 'agent', 'text': '请提供定制数量'},
+            {'id': 'm2', 'role': 'customer', 'text': '还在吗？'},
+        ])
+        self.graph().invoke(self.value(), self.config)
+        current = self.db.conversation(self.cid)
+        self.assertEqual(current['state'], 'collecting')
+        self.assertEqual(current['fields'], {'product': 'TEST-1'})
+
+    def test_nudge_does_not_hide_unanswered_product_question(self):
+        self.db.ingest('mock', 'shop', 'customer-1', '客户甲', [
+            {'id': 'm2', 'role': 'customer', 'text': '客服在吗？'},
+        ])
+        self.graph().invoke(self.value(), self.config)
+        self.assertIn('5V', self.db.one('SELECT reply FROM outbox')['reply'])
+
+    def test_ungrounded_consult_still_hands_off_and_can_restart_after_cancellation(self):
+        self.db.execute('UPDATE knowledge SET enabled=0')
+        graph = self.graph()
+        graph.invoke(self.value(), self.config)
+        self.assertEqual(self.db.conversation(self.cid)['state'], 'waiting')
+        self.assertEqual(graph.get_state(self.config).next, ('wait_colleague',))
+        self.db.execute("UPDATE tasks SET status='cancelled'")
+        self.db.set_state(self.cid, 'active')
+        self.db.ingest('mock', 'shop', 'customer-1', '客户甲', [
+            {'id': 'm2', 'role': 'customer', 'text': '想问声好'},
+        ])
+        # Fresh input replaces the cancelled interrupt without deleting checkpoints.
+        graph = self.graph('greeting')
+        graph.invoke(self.value(), self.config)
+        self.assertEqual(graph.get_state(self.config).next, ())
+        self.assertEqual(self.db.conversation(self.cid)['state'], 'active')
+        reply = self.db.one("SELECT * FROM outbox WHERE source_id='m2'")
+        self.assertIn('在的', reply['reply'])
+        self.assertNotIn('5V', reply['reply'])
+        self.assertFalse(self.db.rows("SELECT * FROM tasks WHERE status='open'"))
+
     def test_custom_collection_then_persistent_colleague_resume(self):
         self.graph('custom', {'product': 'TEST-1'}).invoke(self.value(), self.config)
         self.assertEqual(self.db.conversation(self.cid)['state'], 'collecting')
@@ -161,6 +218,60 @@ class ServiceCase(unittest.TestCase):
         with self.assertRaises(ModelError):
             self.graph('invalid').invoke(self.value(), self.config)
         self.assertFalse(self.db.rows('SELECT * FROM outbox'))
+
+    def test_first_thanks_replies_once_and_new_question_is_not_swallowed(self):
+        courtesy = '客气了，有需要随时联系我。'
+        self.db.ingest('mock', 'shop', 'customer-1', '客户甲', [
+            {'id': 'a1', 'role': 'agent', 'text': '这款使用5V供电。'},
+            {'id': 'm2', 'role': 'customer', 'text': '好的，谢谢客服'},
+        ])
+        graph = self.graph(callback=lambda context: self.fail('简单致谢不调用模型'))
+        graph.invoke(self.value(), self.config)
+        self.assertEqual(self.db.one("SELECT reply FROM outbox WHERE source_id='m2'")['reply'], courtesy)
+        self.db.ingest('mock', 'shop', 'customer-1', '客户甲', [
+            {'id': 'a2', 'role': 'agent', 'text': courtesy},
+            {'id': 'm3', 'role': 'customer', 'text': '谢谢您！'},
+        ])
+        graph.invoke(self.value(), self.config)
+        self.assertEqual(self.db.one("SELECT status FROM outbox WHERE source_id='m3'")['status'], 'ignored')
+        self.db.ingest('mock', 'shop', 'customer-1', '客户甲', [
+            {'id': 'm4', 'role': 'customer', 'text': '谢谢，TEST-1供电电压是多少？'},
+        ])
+        self.graph().invoke(self.value(), self.config)
+        self.assertIn('5V', self.db.one("SELECT reply FROM outbox WHERE source_id='m4'")['reply'])
+        self.db.ingest('mock', 'shop', 'customer-1', '客户甲', [
+            {'id': 'a4', 'role': 'agent', 'text': '使用5V供电。'},
+            {'id': 'm5', 'role': 'customer', 'text': '谢谢'},
+        ])
+        graph.invoke(self.value(), self.config)
+        self.assertEqual(self.db.one("SELECT reply FROM outbox WHERE source_id='m5'")['reply'], courtesy)
+
+    def test_quote_collects_then_hands_off_without_reasking_known_fields(self):
+        graph = self.graph('quote', {'product': 'TEST-1'})
+        graph.invoke(self.value(), self.config)
+        self.assertEqual(self.db.conversation(self.cid)['state'], 'collecting')
+        self.assertFalse(self.db.rows('SELECT * FROM tasks'))
+        reply = self.db.one('SELECT reply FROM outbox')['reply']
+        self.assertIn('数量', reply)
+        self.assertNotIn('产品型号', reply)
+        self.db.ingest('mock', 'shop', 'customer-1', '客户甲', [
+            {'id': 'a1', 'role': 'agent', 'text': reply},
+            {'id': 'm2', 'role': 'customer', 'text': '谢谢'},
+        ])
+        graph.invoke(self.value(), self.config)
+        self.assertEqual(self.db.conversation(self.cid)['state'], 'collecting')
+        self.assertEqual(graph.get_state(self.config).values['collection_intent'], 'quote')
+        self.db.ingest('mock', 'shop', 'customer-1', '客户甲', [
+            {'id': 'm3', 'role': 'customer', 'text': '100台，在这里联系'},
+        ])
+        def complete(context):
+            self.assertEqual(context['collection_intent'], 'quote')
+            return {'intent': 'quote', 'fields': {'quantity': '100台', 'contact': '当前会话'}, 'need_colleague': True}
+        self.graph(callback=complete).invoke(self.value(), self.config)
+        self.assertEqual(self.db.conversation(self.cid)['state'], 'waiting')
+        task = self.db.one('SELECT * FROM tasks')
+        self.assertEqual(json.loads(task['fields'])['product'], 'TEST-1')
+        self.assertEqual(self.db.one("SELECT reply FROM outbox WHERE source_id='m3'")['reply'], '这个需要进一步确认，我帮您看看，稍等。')
 
     def test_cancel_during_browser_preparation_is_not_restored_to_draft(self):
         oid = self.db.prepare_reply(self.cid, 'm1', '回复', 'ready')
