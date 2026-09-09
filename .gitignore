@@ -15,6 +15,4 @@ config.local.yaml
 *.p12
 *.log
 /*.csv
-/openclaw-host/shop-faq.md
-/openclaw-host/SOUL.md
-/openclaw-host/style.md
+/data/raw/*.csv

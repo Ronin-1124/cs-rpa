@@ -9,6 +9,14 @@ import re
 import time
 
 
+# Keep original provenance names compatible with the curated bundle manifest.
+RAW_CSV_SOURCES = {
+    'customer-qa.csv': '电商客服Q&A_数据表_表格.csv',
+    'quick-phrases.csv': '2026-09-07快捷短语.csv',
+    'kefubao-phrases.csv': 'kefubao话术.csv',
+}
+
+
 def terms(text):
     text = text.lower()
     words = re.findall(r'[a-z0-9][a-z0-9_.+-]*', text)

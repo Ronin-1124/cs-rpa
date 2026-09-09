@@ -14,7 +14,7 @@ from urllib.parse import parse_qs, urlparse
 
 from cs_rpa import VERSION
 from cs_rpa.database import Database, ROOT
-from cs_rpa.knowledge import Knowledge
+from cs_rpa.knowledge import Knowledge, RAW_CSV_SOURCES
 from cs_rpa.models import ModelClient, ModelError
 from cs_rpa.runtime import Runtime
 from cs_rpa.settings import Settings
@@ -51,9 +51,10 @@ class Application:
                     raise ValueError('请先停止接待，再同步整理后的知识包')
                 from cs_rpa.knowledge_bundle import import_bundle
                 return [import_bundle(self.db, bundle)]
-            for path in sorted(self.import_root.glob('*.csv')):
+            for path in sorted((self.import_root / 'data' / 'raw').glob('*.csv')):
                 try:
-                    results.append(self.knowledge.import_csv(path.name, path.read_text(encoding='utf-8-sig')))
+                    source = RAW_CSV_SOURCES.get(path.name, path.name)
+                    results.append(self.knowledge.import_csv(source, path.read_text(encoding='utf-8-sig')))
                 except (ValueError, UnicodeError):
                     results.append({'file': path.name, 'error': '字段或编码不受支持'})
         return results

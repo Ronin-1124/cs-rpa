@@ -1,6 +1,6 @@
 # 咚咚本地复刻 v2
 
-基于 `jingmai-dom-observations.md` 的真实页面观测重建。旧红色模拟页、旧控制页、旧 UIA 演示入口已替换；不再把旧模拟页的 DOM 测试结果用于新版。Windows 与 Linux 均可运行新版 HTTP 服务和 Playwright 驱动。
+基于[真实页面观测](jingmai-dom-observations.md)重建，提供独立模拟 HTTP 服务和 Playwright 模板回归。以下命令均在项目根目录执行，日常接待使用 `run.cmd serve` 启动完整应用。
 
 ## 启动
 
@@ -13,7 +13,7 @@
 - 工作台：http://127.0.0.1:18766/workbench
 - 客户控制台：http://127.0.0.1:18766/control
 
-旧服务仍占用 18765 时，新版使用独立的 18766，不会自动接管旧进程。新版数据为 `artifacts/dongdong-replica-v2.json`，不会读取旧的 `mock-dongdong.json`。旧 artifacts 仅为历史记录。
+独立模拟服务默认使用 18766 端口，与完整应用默认端口相同，不应同时启动。独立数据文件为 `artifacts/dongdong-replica-v2.json`；完整应用的模拟数据默认在 `artifacts/app/mock.json`。
 
 ## 页面验证
 
@@ -25,9 +25,9 @@
 .venv\Scripts\python.exe -X utf8 -m mock_dongdong demo
 ```
 
-默认测试浏览器无窗口，不会打开外部 Edge 窗口。Codex 中仍可查看相同服务的数据。需要显式独立窗口时才传 `--headed`。Windows 默认使用已安装的 Edge；Linux 默认 Chromium，安装依赖：`pip install playwright`、`python -m playwright install --with-deps chromium`。Windows UIA 旧依赖不属于新版离线服务的必要条件。
+默认测试浏览器无窗口，需要独立窗口时传 `--headed`。Windows 默认使用已安装的 Edge；Linux 默认 Chromium，安装依赖：`pip install playwright`、`python -m playwright install --with-deps chromium`。跨平台部署尚未完整验证。
 
-统一入口为 `python -m mock_dongdong demo`，Windows 也可使用 `run.cmd demo`。原 `run-offline-demo.cmd`、`run-jm-mock.cmd` 与 `probe_jm_playwright.py` 重复入口已移除。历史客户端脚本已归入 `legacy/`，旧 UIA 模拟流程不再提供。
+统一入口为 `python -m mock_dongdong demo`，Windows 也可使用 `run.cmd demo`。
 
 ## 复刻边界
 

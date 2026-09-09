@@ -26,7 +26,7 @@ Windows 10/11 x64，联网执行：
 ## 第一次接待
 
 1. 打开“模型配置”，保存 API 协议、地址、模型名和密钥，测试连接。首次启动会从项目 `.env` 中的 `MINIMAX_*` 配置导入一个 MiniMax 连接，之后以管理页面保存的配置为准。
-2. 在“业务知识”同步项目资料或添加知识。优先使用 `artifacts/knowledge/knowledge-cleaned/` 整理包；没有整理包时，首次启动才导入根目录客服 CSV。相同整理包重复同步不会新增，不修改原始材料。
+2. 在“业务知识”同步项目资料或添加知识。优先使用 `artifacts/knowledge/knowledge-cleaned/` 整理包；没有整理包时，首次启动从 `data/raw/` 导入客服 CSV。相同整理包重复同步不会新增，不修改原始材料。
 3. 在“接待设置”选择本地模拟环境。默认审核后发送，可切换为模拟环境自动回复。
 4. 点击“开始接待”，再从模拟客户控制台创建客户并发送问题。程序通过工作台 DOM 读取消息，回复出现在管理页面。
 5. 审核模式下可以修改草稿，点击“审核通过”后程序核对当前客户和最新消息，再从网页发送。
@@ -83,8 +83,8 @@ RPA 默认进入并扫描“正在咨询”（包括该面板内的留言），�
 - `deploy/setup.ps1`：Windows 环境安装实现，统一由根目录 `setup.cmd` 调用。
 - `mock_dongdong/`：本地复刻网页、隔离测试数据、旧模板 DOM 回归；不会连接京东。
 - `tests/`：单元测试与可选端到端测试，不依赖真实客户资料。
-- `legacy/`、`openclaw-host/`：保留的历史实验与独立设备桥接，当前应用不依赖它们。
-- `guide.md`：原始业务需求；实现细节和剩余边界见 [docs/architecture.md](docs/architecture.md)。
+- `data/raw/`：原始客服 CSV，命名与来源对应关系见 [资料说明](docs/source-data.md)。CSV 不提交到 Git。
+- `docs/`：项目文档，包括[业务需求](docs/requirements.md)、[架构设计](docs/architecture.md)、[模拟回归](docs/offline-demo.md)和[真实页面采集记录](docs/jingmai-dom-observations.md)。
 
 ```powershell
 .\.venv\Scripts\python.exe -m unittest discover -s tests -v
@@ -95,6 +95,6 @@ RPA 默认进入并扫描“正在咨询”（包括该面板内的留言），�
 
 `service_smoke` 使用临时数据库和合成客户，通过浏览器测试管理页、审核发送、暂停恢复、定制协作、移动端布局；默认替代模型，不调用外部 API。`--live-model` 只将硬编码的虚构 TEST-1 资料和合成对话发给 `.env` 指定的模型，不导入项目 CSV。截图和报告位于 `artifacts/service-smoke/` 或 `artifacts/service-live-smoke/`。
 
-旧模板回归详情见 [OFFLINE-DEMO.md](OFFLINE-DEMO.md)，真实 DOM 依据见 [jingmai-dom-observations.md](jingmai-dom-observations.md)。旧回归自行创建的服务现在随测试结束关闭，不再遗留后台进程。
+离线模板回归详情见 [模拟回归文档](docs/offline-demo.md)，真实 DOM 依据见 [页面采集记录](docs/jingmai-dom-observations.md)。回归自行创建的服务会随测试结束关闭。
 
 离线 Lucide 图标库许可证见 `mock_dongdong/web/lucide.LICENSE`。

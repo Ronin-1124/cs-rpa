@@ -19,12 +19,3 @@ class CliTests(unittest.TestCase):
                 )
                 self.assertEqual(result.returncode, 0, result.stderr)
                 self.assertIn("usage:", result.stdout)
-
-    def test_removed_mock_entry_explains_replacement(self):
-        result = subprocess.run(
-            [sys.executable, "-S", "-m", "legacy.run", "--mock"],
-            cwd=ROOT, capture_output=True, text=True, timeout=15,
-        )
-        self.assertNotEqual(result.returncode, 0)
-        self.assertIn("python -m mock_dongdong demo", result.stderr)
-        self.assertNotIn("ModuleNotFoundError", result.stderr)
