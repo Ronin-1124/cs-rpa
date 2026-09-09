@@ -87,10 +87,21 @@ function fillSettings(){
   $('#custom-fields').innerHTML=Object.entries(fields).map(([key,label])=>`<label><input type="checkbox" name="custom_field" value="${key}" ${state.config.custom_fields.includes(key)?'checked':''}>${label}</label>`).join('');
 }
 async function loadKnowledge(){
-  try{const data=await api('knowledge?q='+encodeURIComponent($('#knowledge-search').value));$('#knowledge-count').textContent=`启用 ${state?.counts.knowledge??0} 条`;
-    $('#knowledge-list').innerHTML=data.items.length?data.items.map(k=>{let sources=[];try{sources=JSON.parse(k.sources);}catch{}return `<article class="knowledge-item ${k.enabled?'':'disabled'}"><div><h3>${esc(k.title)}</h3>${k.product?`<span class="badge neutral">${esc(k.product)}</span>`:''}<details><summary>查看知识内容</summary><p>${esc(k.content)}</p></details><small>${sources.map(s=>esc(s.file)+' · 第 '+s.row+' 行').join('；')}</small></div><button class="button quiet" data-knowledge="${esc(k.id)}" data-enabled="${k.enabled?'0':'1'}">${k.enabled?'停用':'启用'}</button></article>`}).join(''):empty('没有找到知识条目','导入客服 CSV，或手动添加已确认的产品与业务资料。','book-open');hydrate();
+  try{
+    const kind=$('#knowledge-collection').value;
+    const endpoint=kind?'knowledge/materials?kind='+encodeURIComponent(kind)+'&q=':'knowledge?q=';
+    const data=await api(endpoint+encodeURIComponent($('#knowledge-search').value));
+    $('#knowledge-count').textContent=`启用 ${state?.counts.knowledge??0} 条 · 当前最多显示 100 条`;
+    const bundle=state?.knowledge_bundle;
+    if(bundle?.batch)$('#knowledge-import-summary').textContent=`已接入 ${bundle.active_documents} 篇官方文档、${bundle.inserted} 个完整章节。${bundle.counts.knowledge_candidates} 条问答候选和 ${bundle.counts.policy_candidates} 条业务规则保留供审核。来源提交 ${bundle.official_commit.slice(0,12)}。`;
+    $('#knowledge-list').innerHTML=data.items.length?data.items.map(k=>{
+      let sources=[];try{sources=JSON.parse(k.sources);}catch{}
+      const provenance=sources.map(s=>esc(s.file||s.document_id||'')+(s.row?' · 第 '+s.row+' 行':'')+(s.section?' · '+esc(s.section):'')+(s.commit?' · '+esc(s.commit.slice(0,12)):'' )).join('；');
+      return `<article class="knowledge-item ${k.enabled||k.material?'':'disabled'}"><div><h3>${esc(k.title)}</h3>${k.product?`<span class="badge neutral">${esc(k.product)}</span>`:''}${k.material?`<span class="badge neutral">${esc(({active:'已纳入回复知识',reference:'保留供参考',discarded:'已排除',open:'待核实',partially_resolved:'部分解决',resolved_as_support_level:'已区分支持范围',candidate_lexical_hit:'关键词命中，尚未核实',candidate_no_official_hit:'未找到官方依据',candidate_unchecked:'尚未核实',checked_supported:'有核对依据，保留候选',checked_possible_conflict:'疑似冲突',official_source_as_candidate:'官方主题候选'})[k.material_status]||k.material_status)}</span>`:''}<details><summary>查看内容与依据</summary><p>${esc(k.content)}</p></details><small>${provenance}</small></div>${k.material?'':`<button class="button quiet" data-knowledge="${esc(k.id)}" data-enabled="${k.enabled?'0':'1'}">${k.enabled?'停用':'启用'}</button>`}</article>`;
+    }).join(''):empty('没有找到资料','尝试产品全称、关键词，或切换资料类型。','book-open');hydrate();
   }catch(e){toast(e.message,true);}
 }
+$('#knowledge-collection').addEventListener('change',loadKnowledge);
 async function refresh(){state=await api('state');render();}
 async function perform(button, work){button.disabled=true;try{await work();await refresh();}catch(e){toast(e.message,true);}finally{if(button.isConnected){button.disabled=false;if(button.dataset.command&&state)render();}}}
 document.addEventListener('click',e=>{

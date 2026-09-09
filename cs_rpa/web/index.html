@@ -41,7 +41,8 @@
       <section class="view" id="view-knowledge" hidden>
         <div class="page-heading"><div><p class="eyebrow">KNOWLEDGE LIBRARY</p><h1>业务知识</h1><p>统一维护产品资料与客服话术，保留每一条信息的来源。</p></div><button class="button primary" id="add-knowledge"><i data-lucide="plus"></i>添加知识</button></div>
         <div class="panel knowledge-toolbar"><label class="search"><i data-lucide="search"></i><input id="knowledge-search" placeholder="搜索问题、产品或话术"></label><span id="knowledge-count" class="muted"></span><button class="button secondary" id="import-project"><i data-lucide="folder-input"></i>同步项目资料</button><label class="button secondary upload"><i data-lucide="upload"></i>导入 CSV<input id="csv-file" type="file" accept=".csv" hidden></label></div>
-        <p class="help-note">历史话术仅作业务参考。实时库存、报价和交期须由同事确认。图片附件暂不作为可发送素材。</p>
+        <p class="help-note" id="knowledge-import-summary">历史话术仅作业务参考。实时库存、报价和交期须由同事确认。图片附件暂不作为可发送素材。</p>
+        <label class="help-note">查看资料 <select id="knowledge-collection"><option value="">回复知识</option><option value="knowledge_candidates">问答候选（不自动用于回复）</option><option value="policy_candidates">业务规则候选</option><option value="review_queue">核实事项</option><option value="official_documents">官方原文及解析状态</option><option value="csv_records">CSV 原始行追溯</option><option value="product_aliases">型号别名</option><option value="delivery_notes">整理报告与表达参考</option></select></label>
         <div class="panel" id="knowledge-list"></div>
       </section>
       <section class="view" id="view-models" hidden>

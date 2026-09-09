@@ -7,6 +7,21 @@ def main(argv=None):
         if hasattr(stream, 'reconfigure'):
             stream.reconfigure(encoding='utf-8')
     argv = list(sys.argv[1:] if argv is None else argv)
+    if argv and argv[0] == 'import-knowledge':
+        parser = argparse.ArgumentParser(description='导入整理后的 Radxa 知识包（请先停止服务）')
+        parser.add_argument('bundle')
+        parser.add_argument('--data-dir', default='artifacts/app')
+        args = parser.parse_args(argv[1:])
+        import json
+        from pathlib import Path
+        from cs_rpa.database import Database
+        from cs_rpa.knowledge_bundle import import_bundle
+        db = Database(Path(args.data_dir) / 'business.sqlite3')
+        try:
+            print(json.dumps(import_bundle(db, Path(args.bundle)), ensure_ascii=False, indent=2))
+        finally:
+            db.close()
+        return 0
     if argv and argv[0] not in ('serve', '-h', '--help'):
         from mock_dongdong.cli import main as replica_cli
         return replica_cli(argv)

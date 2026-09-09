@@ -45,6 +45,12 @@ class Application:
     def import_project_knowledge(self):
         results = []
         if self.import_root:
+            bundle = self.import_root / 'artifacts' / 'knowledge' / 'knowledge-cleaned'
+            if bundle.is_dir():
+                if self.runtime.status()['running']:
+                    raise ValueError('请先停止接待，再同步整理后的知识包')
+                from cs_rpa.knowledge_bundle import import_bundle
+                return [import_bundle(self.db, bundle)]
             for path in sorted(self.import_root.glob('*.csv')):
                 try:
                     results.append(self.knowledge.import_csv(path.name, path.read_text(encoding='utf-8-sig')))
@@ -61,6 +67,7 @@ class Application:
             'sent': "SELECT count(*) n FROM outbox WHERE status='sent'",
         }.items()}
         return {'version': VERSION, 'runtime': self.runtime.status(), 'counts': counts,
+            'knowledge_bundle': self.db.setting('knowledge_bundle', {}),
             'config': self.settings.runtime(public=True), 'profiles': self.settings.profiles(),
             'conversations': self.db.rows('SELECT * FROM conversations ORDER BY updated DESC LIMIT 200'),
             'outbox': self.db.rows("SELECT o.*, c.name FROM outbox o JOIN conversations c ON c.id=o.conversation_id WHERE o.status NOT IN ('ignored') ORDER BY o.created DESC LIMIT 100"),
@@ -90,8 +97,20 @@ class Handler(MockHandler):
                 return self._json(200, {'conversation': self.app.db.conversation(cid), 'messages': self.app.db.history(cid, 500)})
             if path == '/api/manage/knowledge':
                 term = query.get('q', [''])[0]
-                rows = self.app.db.rows('SELECT * FROM knowledge WHERE title LIKE ? OR content LIKE ? ORDER BY updated DESC LIMIT 100', ('%' + term + '%', '%' + term + '%'))
+                rows = self.app.db.rows('SELECT * FROM knowledge WHERE title LIKE ? OR content LIKE ? OR product LIKE ? ORDER BY enabled DESC,updated DESC LIMIT 100', ('%' + term + '%',) * 3)
                 return self._json(200, {'items': rows})
+            if path == '/api/manage/knowledge/materials':
+                kind, term = query.get('kind', ['review_queue'])[0], query.get('q', [''])[0]
+                rows = self.app.db.rows('SELECT * FROM knowledge_materials WHERE kind=? AND payload LIKE ? ORDER BY id LIMIT 100', (kind, '%' + term + '%'))
+                items = []
+                for row in rows:
+                    payload = json.loads(row['payload'])
+                    title = next((payload[k] for k in ('title', 'topic', 'summary', 'source_path', 'source_file', 'raw')
+                                  if isinstance(payload.get(k), str)), '资料追溯')
+                    items.append({'id': row['id'], 'title': row['id'] + ' · ' + title,
+                                  'content': json.dumps(payload, ensure_ascii=False, indent=2),
+                                  'material_status': row['status'], 'material': True, 'sources': '[]'})
+                return self._json(200, {'items': items})
             if path == '/api/health':
                 return self._json(200, {'ok': True, 'version': 2, 'app_version': VERSION, 'offline': True})
             if path in ('/', '/manage', '/manage/') or path.startswith('/manage/'):

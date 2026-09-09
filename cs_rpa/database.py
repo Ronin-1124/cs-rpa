@@ -9,6 +9,8 @@ import time
 import uuid
 from pathlib import Path
 
+from cs_rpa.knowledge import terms
+
 ROOT = Path(__file__).resolve().parents[1]
 
 
@@ -19,9 +21,11 @@ class Database:
         self.lock = threading.RLock()
         self.conn = sqlite3.connect(path, check_same_thread=False, timeout=15)
         self.conn.row_factory = sqlite3.Row
+        self.conn.create_function('knowledge_terms', 1, lambda value: ' '.join(sorted(terms(value or ''))))
         self.conn.executescript("""
             PRAGMA journal_mode=WAL;
             PRAGMA foreign_keys=ON;
+            PRAGMA recursive_triggers=ON;
             CREATE TABLE IF NOT EXISTS settings(key TEXT PRIMARY KEY, value TEXT NOT NULL);
             CREATE TABLE IF NOT EXISTS profiles(id TEXT PRIMARY KEY, name TEXT, protocol TEXT,
                 base_url TEXT, api_key TEXT, model TEXT, timeout INTEGER, max_tokens INTEGER);
@@ -45,7 +49,26 @@ class Database:
                 product TEXT, sources TEXT, enabled INTEGER DEFAULT 1, updated REAL);
             CREATE TABLE IF NOT EXISTS events(id INTEGER PRIMARY KEY AUTOINCREMENT,
                 kind TEXT, text TEXT, created REAL);
+            CREATE TABLE IF NOT EXISTS knowledge_materials(id TEXT PRIMARY KEY,
+                kind TEXT, status TEXT, payload TEXT, batch TEXT);
+            CREATE VIRTUAL TABLE IF NOT EXISTS knowledge_fts USING fts5(title,body);
+            CREATE TRIGGER IF NOT EXISTS knowledge_insert AFTER INSERT ON knowledge BEGIN
+                INSERT INTO knowledge_fts(rowid,title,body) VALUES(new.rowid,
+                    knowledge_terms(new.title || ' ' || new.product),knowledge_terms(new.content));
+            END;
+            CREATE TRIGGER IF NOT EXISTS knowledge_delete AFTER DELETE ON knowledge BEGIN
+                DELETE FROM knowledge_fts WHERE rowid=old.rowid;
+            END;
+            CREATE TRIGGER IF NOT EXISTS knowledge_update AFTER UPDATE ON knowledge BEGIN
+                DELETE FROM knowledge_fts WHERE rowid=old.rowid;
+                INSERT INTO knowledge_fts(rowid,title,body) VALUES(new.rowid,
+                    knowledge_terms(new.title || ' ' || new.product),knowledge_terms(new.content));
+            END;
         """)
+        if not self.conn.execute("SELECT 1 FROM settings WHERE key='knowledge_fts_v1'").fetchone():
+            self.conn.execute('DELETE FROM knowledge_fts')
+            self.conn.execute("INSERT INTO knowledge_fts(rowid,title,body) SELECT rowid,knowledge_terms(title || ' ' || product),knowledge_terms(content) FROM knowledge")
+            self.conn.execute("INSERT INTO settings VALUES('knowledge_fts_v1','true')")
         columns = {row[1] for row in self.conn.execute('PRAGMA table_info(outbox)')}
         if 'sent_source_id' not in columns:
             self.conn.execute("ALTER TABLE outbox ADD COLUMN sent_source_id TEXT DEFAULT ''")
