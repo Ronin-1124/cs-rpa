@@ -3,3 +3,7 @@
 .button.danger{color:#9b3e32;border:1px solid #d9b9aa;background:#fff7f2}.button.danger:hover{background:#f9e9df}.migration-command{display:block;overflow-wrap:anywhere;white-space:pre-wrap;padding:12px;background:#eef4e8;border-radius:8px}.customer-detail-header{flex-wrap:wrap;gap:10px}
 
 #view-data .settings-layout{grid-template-columns:repeat(2,minmax(0,1fr))}#view-data input[type=checkbox]{width:auto;min-height:0;margin:0 8px 0 0}#view-data .form hr{width:100%;border:0;border-top:1px solid var(--line)}@media(max-width:1150px){#view-data .settings-layout{grid-template-columns:1fr}}
+
+.reception-choices{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:18px}.form .setting-choice{padding:20px;border:1px solid var(--line);border-radius:12px;background:#f7faf2;gap:12px}.setting-choice select{font-size:16px;font-weight:600;background:white}.setting-choice small{min-height:32px}.reception-summary{border-left:3px solid var(--green);background:#edf4e2;padding:14px 18px;color:#426324;line-height:1.6}.reception-advanced summary{cursor:pointer;padding:12px 0}.reception-advanced .form-row{padding:12px 0}@media(max-width:760px){.reception-choices{grid-template-columns:1fr}}
+
+#settings-form label[hidden]{display:none}

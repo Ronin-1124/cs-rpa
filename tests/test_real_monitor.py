@@ -29,13 +29,42 @@ class RealBaselineCase(unittest.TestCase):
         self.assertFalse(runtime.baseline_history(self.cid, messages, started))
         self.assertNotEqual(self.db.conversation(self.cid)['handled_id'], 'm1')
 
-    def test_real_auto_mode_still_creates_only_drafts(self):
-        self.settings.save_runtime({'transport': 'jingmai', 'mode': 'auto'})
+    def test_reply_mode_is_independent_of_page_source(self):
+        for transport in ('mock', 'jingmai'):
+            for mode in ('draft', 'auto'):
+                with self.subTest(transport=transport, mode=mode):
+                    self.db.execute('DELETE FROM outbox')
+                    self.settings.save_runtime({'transport': transport, 'mode': mode})
+                    self.graph().invoke(self.value(), self.config)
+                    self.assertEqual(self.db.one('SELECT status FROM outbox')['status'], 'ready' if mode == 'auto' else 'draft')
+
+    def test_draft_filled_once_and_never_sent(self):
         self.graph().invoke(self.value(), self.config)
+        runtime = Runtime(self.db, self.settings, self.knowledge)
+        runtime.state = 'running'
+        adapter = Mock()
+        adapter.fill_draft.side_effect = lambda name, source, reply, check: ('filled', '已填入网页输入框，未发送') if check() else ('draft', '已取消')
+        runtime._fill_drafts(adapter)
+        runtime._fill_drafts(adapter)
+        self.assertEqual(adapter.fill_draft.call_count, 1)
+        adapter.send.assert_not_called()
         self.assertEqual(self.db.one('SELECT status FROM outbox')['status'], 'draft')
 
+    def test_handoff_reply_uses_same_independent_mode(self):
+        for transport in ('mock', 'jingmai'):
+            for mode in ('draft', 'auto'):
+                with self.subTest(transport=transport, mode=mode):
+                    self.db.execute('DELETE FROM outbox')
+                    self.db.execute('DELETE FROM tasks')
+                    self.db.set_state(self.cid, 'active')
+                    self.settings.save_runtime({'transport': transport, 'mode': mode})
+                    config = {'configurable': {'thread_id': transport + mode}}
+                    self.graph(intent='after_sales').invoke(self.value(), config)
+                    self.assertTrue(self.db.one('SELECT id FROM tasks'))
+                    self.assertEqual(self.db.one('SELECT status FROM outbox')['status'], 'ready' if mode == 'auto' else 'draft')
+
     def test_real_monitor_skips_old_history_then_processes_new_message(self):
-        self.settings.save_runtime({'transport': 'jingmai', 'mode': 'auto', 'merge_seconds': 0, 'poll_seconds': 1})
+        self.settings.save_runtime({'transport': 'jingmai', 'mode': 'draft', 'merge_seconds': 0, 'poll_seconds': 1})
         db, calls, reads = self.db, [], []
         runtime = None
         class Adapter(BrowserAdapter):
@@ -56,7 +85,7 @@ class RealBaselineCase(unittest.TestCase):
             def close(self):
                 pass
             def send(self, *args):
-                raise AssertionError('真实环境不应进入自动发送')
+                raise AssertionError('草稿模式不应进入自动发送')
         class Model:
             def __init__(self, profile):
                 pass

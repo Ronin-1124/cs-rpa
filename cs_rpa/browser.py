@@ -34,6 +34,7 @@ class BrowserAdapter:
         self.confirmed_message = None
         self.initial_keys = None
         self.read_cache = {}
+        self.owned_drafts = {}
         self.cancelled = lambda: False
 
     def should_read(self, customer, force=False):
@@ -214,17 +215,18 @@ class BrowserAdapter:
                 text: body.textContent, timestamp: side.querySelector('.message__time_str')?.textContent || ''}];
         })""")
 
-    def send(self, name, source_id, reply, before_click):
-        self.confirmed_message = None
+    def fill_draft(self, name, source_id, reply, before_fill):
         messages = self.open_customer(name)
         if not messages or messages[-1]['id'] != source_id:
             return 'stale', '网页已有新消息，本条回复已取消'
-        if self.config['transport'] != 'mock':
-            return 'draft', '真实网页当前提供读取与草稿审核；真实发送需完成平台验证后启用'
         editor = self.page.locator(EDITOR)
-        if editor.inner_text().strip():
+        existing = comparable_text(editor.inner_text())
+        if existing and existing != self.owned_drafts.get(name) and existing != comparable_text(reply):
             return 'draft', '输入框存在未发送内容，请先处理草稿'
+        if not before_fill():
+            return 'draft', '运行已暂停或会话被同事接管'
         editor.fill(reply)
+        self.owned_drafts[name] = comparable_text(reply)
         if comparable_text(editor.inner_text()) != comparable_text(reply):
             editor.fill('')
             return 'draft', '输入框内容与审核回复不一致，请检查页面'
@@ -232,9 +234,21 @@ class BrowserAdapter:
         if self.page.locator(HEADER).first.inner_text() != name or not latest or latest[-1]['id'] != source_id:
             editor.fill('')
             return 'stale', '发送前会话发生变化'
+        return 'filled', '已填入网页输入框，未发送'
+
+    def send(self, name, source_id, reply, before_click):
+        self.confirmed_message = None
+        status, reason = self.fill_draft(name, source_id, reply, lambda: True)
+        if status != 'filled':
+            return status, reason
+        editor = self.page.locator(EDITOR)
         if not before_click():
             editor.fill('')
             return 'draft', '运行已暂停或会话被同事接管'
+        latest = self.read_messages()
+        if self.page.locator(HEADER).first.inner_text() != name or not latest or latest[-1]['id'] != source_id:
+            editor.fill('')
+            return 'stale', '发送前会话发生变化'
         before = {m['id'] for m in latest}
         try:
             self.page.locator('.SendButtonGroup > .send-button').click(timeout=5000)
@@ -243,6 +257,7 @@ class BrowserAdapter:
                 for message in self.read_messages():
                     if message['id'] not in before and message['role'] == 'agent' and comparable_text(message['text']) == comparable_text(reply):
                         self.confirmed_message = message
+                        self.owned_drafts.pop(name, None)
                         return 'sent', ''
                 self.page.wait_for_timeout(150)
         except Exception:

@@ -3,7 +3,7 @@ const $ = (s, r=document) => r.querySelector(s);
 const $$ = (s, r=document) => [...r.querySelectorAll(s)];
 const esc = v => String(v ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
 const icon = name => `<i data-lucide="${name}"></i>`;
-const labels = {stopped:"未启动",starting:"启动中",running:"接待中",paused:"已暂停",stopping:"停止中",waiting_login:"等待登录",error:"需检查",active:"接待中",collecting:"收集需求",waiting:"等待同事",human:"同事接管",draft:"待审核",ready:"排队中",sending:"发送中",sent:"已发送",stale:"已过期",uncertain:"待核对",cancelled:"已取消",open:"待处理",resolved:"已完成",pending:"未通知",failed:"通知失败",ignored:"无需回复"};
+const labels = {stopped:"未启动",starting:"启动中",running:"接待中",paused:"已暂停",stopping:"停止中",waiting_login:"等待登录",error:"需检查",active:"接待中",collecting:"收集需求",waiting:"等待同事",human:"同事接管",draft:"草稿",ready:"排队中",sending:"发送中",sent:"已发送",stale:"已过期",uncertain:"待核对",cancelled:"已取消",open:"待处理",resolved:"已完成",pending:"未通知",failed:"通知失败",ignored:"无需回复"};
 const fields = {product:"产品型号",requirements:"定制内容",quantity:"数量",deadline:"期望交期",contact:"联系方式",company:"公司或称呼"};
 const viewNames = {overview:"运行总览",conversations:"客户会话",tasks:"同事待办",knowledge:"业务知识",models:"模型配置",settings:"接待设置",data:"数据管理"};
 let state, activeView="overview", selectedCustomer="", initialized=false, toastTimer, historyVersion="", historyGeneration=0;
@@ -26,8 +26,8 @@ function render(){
   $('#runtime-title').textContent=({stopped:'服务已就绪',starting:'正在连接工作台',running:'正在接待客户',paused:'接待已暂停',stopping:'正在结束运行',waiting_login:'等待客服网页登录',error:'连接需要检查'})[runtime.state]||'客服接待';
   $('#runtime-badge').outerHTML=badge(runtime.state).replace('<span ','<span id="runtime-badge" ');
   $('#runtime-detail').textContent=runtime.detail;
-  $('#runtime-target').textContent=state.config.transport==='mock'?'本地模拟':'京东京麦';
-  $('#runtime-mode').textContent=state.config.mode==='auto'?'自动回复':'审核后发送';
+  $('#runtime-target').textContent=state.config.transport==='mock'?'模拟页面':'真实页面 · 京东京麦';
+  $('#runtime-mode').textContent=state.config.mode==='auto'?'自动发送':'填写草稿';
   const active=state.profiles.items.find(p=>p.id===state.profiles.active);
   $('#runtime-model').textContent=active?.model||'尚未配置';
   $('#start').disabled=runtime.running&&runtime.state!=='paused';
@@ -41,7 +41,7 @@ function render(){
   hydrate();
 }
 function renderReplies(){
-  setHTML($('#outbox'),state.outbox.length?state.outbox.map(o=>`<div class="reply-card" data-id="${esc(o.id)}"><div class="card-title"><b>${esc(o.name)}</b>${badge(o.status)}<time>${date(o.created)}</time></div>${o.status==='draft'?`<textarea data-edit="${esc(o.id)}" aria-label="${esc(o.name)}的待审核回复" maxlength="2000">${esc(edits.get(o.id)??o.reply)}</textarea>`:`<p>${esc(o.reply)}</p>`}${o.reason?`<p class="reason">${esc(o.reason)}</p>`:''}<div class="card-actions">${o.status==='draft'?'<button class="button quiet" data-outbox="cancel">取消</button><button class="button primary" data-outbox="approve">审核通过</button>':o.status==='uncertain'?'<button class="button secondary" data-outbox="cancel">核对后取消</button><button class="button primary" data-outbox="confirmed">确认网页已发送</button>':''}</div></div>`).join(''):empty('暂无待处理回复','新消息生成的回复会出现在这里。审核模式下，确认后才会加入发送队列。','file-pen-line'));
+  setHTML($('#outbox'),state.outbox.length?state.outbox.map(o=>`<div class="reply-card" data-id="${esc(o.id)}"><div class="card-title"><b>${esc(o.name)}</b>${badge(o.status)}<time>${date(o.created)}</time></div>${o.status==='draft'?`<textarea data-edit="${esc(o.id)}" aria-label="${esc(o.name)}的回复草稿" maxlength="2000">${esc(edits.get(o.id)??o.reply)}</textarea>`:`<p>${esc(o.reply)}</p>`}${o.reason?`<p class="reason">${esc(o.reason)}</p>`:''}<div class="card-actions">${o.status==='draft'?'<button class="button quiet" data-outbox="cancel">取消</button><button class="button primary" data-outbox="approve">发送回复</button>':o.status==='uncertain'?'<button class="button secondary" data-outbox="cancel">核对后取消</button><button class="button primary" data-outbox="confirmed">确认网页已发送</button>':''}</div></div>`).join(''):empty('暂无待处理回复','新消息生成的回复会出现在这里。填写草稿模式不会自动点击网页发送按钮。','file-pen-line'));
 }
 function renderConversations(){
   if(selectedCustomer&&!state.conversations.some(c=>c.id===selectedCustomer)){
@@ -88,6 +88,7 @@ function fillSettings(){
   }
   form.elements.feishu_webhook.placeholder=state.config.has_feishu_webhook?'已保存，留空保留':'填写机器人 Webhook';
   form.elements.feishu_secret.placeholder=state.config.has_feishu_secret?'已保存，留空保留':'可选：机器人签名密钥';
+  updateReception();
   $('#custom-fields').innerHTML=Object.entries(fields).map(([key,label])=>`<label><input type="checkbox" name="custom_field" value="${key}" ${state.config.custom_fields.includes(key)?'checked':''}>${label}</label>`).join('');
 }
 async function loadKnowledge(){
@@ -159,3 +160,12 @@ $('#export-data').addEventListener('click',e=>perform(e.currentTarget,async()=>{
   a.href=url;a.download='cs-rpa-workspace-'+new Date().toISOString().replace(/[:.]/g,'-')+'.zip';
   document.body.append(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),30000);toast('迁移包已生成，请查看浏览器下载');
 }));
+
+function updateReception(){
+  const form=$('#settings-form'),real=form.elements.transport.value==='jingmai',auto=form.elements.mode.value==='auto';
+  $('#mock-address').hidden=real;$('#real-address').hidden=!real;
+  $('#source-description').textContent=real?'打开京麦工作台，登录后读取正在咨询。':'使用本机模拟工作台接收测试咨询。';
+  $('#mode-description').textContent=auto?'由 RPA 填入回复、点击发送，并核对发送结果。':'由 RPA 填入网页输入框，保留草稿，不点击发送。';
+  $('#reception-summary').textContent=(real?'真实页面 · 京东京麦':'模拟页面')+' / '+(auto?'自动发送':'填写草稿')+' · 回复方式独立于页面来源';
+}
+$('#settings-form').addEventListener('change',updateReception);

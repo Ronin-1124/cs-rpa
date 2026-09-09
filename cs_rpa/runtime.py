@@ -27,6 +27,7 @@ class Runtime:
         self.processed = 0
         self.generation = 0
         self.baseline_count = 0
+        self.drafted = {}
 
     def status(self):
         with self.lock:
@@ -72,6 +73,7 @@ class Runtime:
         started_at = time.time()
         baselined = set()
         self.baseline_count = 0
+        self.drafted = {}
         checkpoint_conn = sqlite3.connect(self.db.path.parent / 'checkpoints.sqlite3', check_same_thread=False)
         pool = concurrent.futures.ThreadPoolExecutor(max_workers=2, thread_name_prefix='cs-rpa-model')
         graph = Workflow(self.db, self.settings, self.knowledge, SqliteSaver(checkpoint_conn), self.model_factory).graph
@@ -189,6 +191,8 @@ class Runtime:
                     except Exception:
                         self.db.event('browser', '一个会话读取未完成，将在下一轮重新检查')
                 if self.state == 'running' and not self.stop_event.is_set():
+                    if config['mode'] == 'draft':
+                        self._fill_drafts(adapter)
                     self._deliver(adapter)
                     for task in self.db.rows("SELECT * FROM tasks WHERE status='open' AND notification='pending'"):
                         if self.stop_event.is_set():
@@ -232,6 +236,28 @@ class Runtime:
                 pass
         self.db.execute('UPDATE conversations SET handled_id=latest_id WHERE id=?', (cid,))
         return True
+
+    def _fill_drafts(self, adapter):
+        for item in self.db.rows("SELECT o.*,c.name,c.state,c.latest_id FROM outbox o JOIN conversations c ON c.id=o.conversation_id WHERE o.status='draft' ORDER BY o.created"):
+            if self.stop_event.is_set() or self.state != 'running':
+                break
+            fingerprint = (item['source_id'], item['reply'])
+            if self.drafted.get(item['id']) == fingerprint or item['state'] == 'human' or item['latest_id'] != item['source_id']:
+                continue
+            def before_fill():
+                current = self.db.conversation(item['conversation_id'])
+                reply = self.db.one('SELECT status,reply FROM outbox WHERE id=?', (item['id'],))
+                return (not self.stop_event.is_set() and self.state == 'running' and current['state'] != 'human'
+                        and current['latest_id'] == item['source_id'] and reply and reply['status'] == 'draft' and reply['reply'] == item['reply'])
+            try:
+                status, reason = adapter.fill_draft(item['name'], item['source_id'], item['reply'], before_fill)
+            except Exception:
+                status, reason = 'draft', '网页草稿填入未完成，请检查页面；重新开始接待可重试'
+            with self.db.lock:
+                current = self.db.one('SELECT status,reply FROM outbox WHERE id=?', (item['id'],))
+                if current and current['status'] == 'draft' and current['reply'] == item['reply']:
+                    self.db.outbox_status(item['id'], 'stale' if status == 'stale' else 'draft', reason)
+            self.drafted[item['id']] = fingerprint
 
     def _deliver(self, adapter):
         for item in self.db.rows("SELECT * FROM outbox WHERE status='ready' ORDER BY created LIMIT 20"):

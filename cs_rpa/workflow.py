@@ -181,7 +181,7 @@ class Workflow:
                 next_state = 'collecting'
             self.db.set_state(cid, next_state, state['fields'])
             config = self.settings.runtime()
-            status = 'ignored' if state['action'] == 'ignore' else ('ready' if config['transport'] == 'mock' and config['mode'] == 'auto' else 'draft')
+            status = 'ignored' if state['action'] == 'ignore' else ('ready' if config['mode'] == 'auto' else 'draft')
             self.db.prepare_reply(cid, state['source_id'], state['reply'], status,
                                   str(state['plan'].get('reason') or ''), state['plan'].get('evidence_ids', []),
                                   replace_draft=bool(state.get('employee_result')))
@@ -199,7 +199,7 @@ class Workflow:
             tid = self.db.create_task(cid, state['source_id'], summary, state['fields'])
             self.db.set_state(cid, 'waiting', state['fields'])
             config = self.settings.runtime()
-            status = 'ready' if config['transport'] == 'mock' and config['mode'] == 'auto' else 'draft'
+            status = 'ready' if config['mode'] == 'auto' else 'draft'
             self.db.prepare_reply(cid, state['source_id'], state['reply'], status, '等待同事确认')
             return {'task_id': tid}
 

@@ -32,7 +32,15 @@ def check_virtual_contacts(playwright):
     </div></div></div>
     <div class="chat-head-name"><span></span></div>
     <div id="t-chat-scroll"></div><div class="EditorContent" contenteditable="true" style="min-height:30px"></div>
+    <div class="SendButtonGroup"><span class="send-button">发送</span></div>
     <script>
+    document.querySelector('.send-button').onclick=()=>{
+      const editor=document.querySelector('.EditorContent');
+      const message=document.createElement('div');message.className='message';
+      message.innerHTML='<div class="message_right" id="sent-test"><span class="message__content"></span></div>';
+      message.querySelector('.message__content').textContent=editor.innerText;
+      document.querySelector('#t-chat-scroll').append(message);editor.innerText='';
+    };
     document.querySelector('[title="正在咨询"]').onclick=()=>{
       document.querySelector('[title="正在咨询"]').classList.add('c_tabs-tab_check');
       document.querySelector('[title="历史咨询"]').classList.remove('c_tabs-tab_check');
@@ -67,6 +75,17 @@ def check_virtual_contacts(playwright):
         assert all(c['initial_history'] for c in contacts)
         assert adapter.open_customer('客户1')[-1]['id'] == 's_1'
         assert adapter.open_customer('客户23')[-1]['id'] == 's_23'
+        status, _ = adapter.fill_draft('客户23', 's_23', '待确认的草稿', lambda: True)
+        assert status == 'filled'
+        expect(page.locator('.EditorContent')).to_have_text('待确认的草稿')
+        assert not page.locator('.message_right').count()
+        status, _ = adapter.send('客户23', 's_23', '待确认的草稿', lambda: True)
+        assert status == 'sent' and adapter.confirmed_message['text'] == '待确认的草稿'
+        assert adapter.send('客户23', 's_23', '过期回复', lambda: True)[0] == 'stale'
+        adapter.open_customer('客户1')
+        page.locator('.EditorContent').fill('客服手写内容')
+        assert adapter.fill_draft('客户1', 's_1', '新草稿', lambda: True)[0] == 'draft'
+        expect(page.locator('.EditorContent')).to_have_text('客服手写内容')
         adapter.mark_read_snapshot(contacts[0])
         assert not adapter.should_read(contacts[0])
         page.evaluate("document.querySelector('#consulting').innerHTML='正在咨询(0)'")
@@ -123,6 +142,19 @@ def main():
                 page.on('pageerror', lambda error: errors.append(str(error)))
                 page.goto(base + '/manage')
                 expect(page.locator('#runtime-title')).to_have_text('服务已就绪')
+                page.locator('.nav-item[data-view=settings]').click()
+                for transport in ('jingmai', 'mock'):
+                    for mode in ('auto', 'draft'):
+                        page.locator('[name=transport]').select_option(transport)
+                        page.locator('[name=mode]').select_option(mode)
+                        expect(page.locator('#mock-address')).to_be_visible() if transport == 'mock' else expect(page.locator('#real-address')).to_be_visible()
+                        expect(page.locator('#real-address')).not_to_be_visible() if transport == 'mock' else expect(page.locator('#mock-address')).not_to_be_visible()
+                        page.locator('#settings-form button[type=submit]').click()
+                        expect(page.locator('#runtime-target')).to_have_text('模拟页面' if transport == 'mock' else '真实页面 · 京东京麦')
+                        expect(page.locator('#runtime-mode')).to_have_text('自动发送' if mode == 'auto' else '填写草稿')
+                        expect(page.locator('#settings-form button[type=submit]')).to_be_enabled()
+                page.evaluate('window.scrollTo(0,0)')
+                page.screenshot(path=str(output / 'reception-settings.png'), full_page=True)
                 page.locator('[data-view="knowledge"]').click()
                 page.locator('#add-knowledge').click()
                 page.locator('#knowledge-form [name=title]').fill('TEST-1供电电压是多少')
@@ -142,6 +174,8 @@ def main():
                 expect(page.locator('#outbox textarea')).to_be_visible(timeout=120000)
                 draft = page.locator('#outbox textarea')
                 assert '5V' in draft.input_value(), draft.input_value()
+                expect(page.locator('#outbox .reason').first).to_have_text('已填入网页输入框，未发送', timeout=15000)
+                assert not app.db.rows("SELECT * FROM outbox WHERE status='sent'")
                 draft.fill(draft.input_value() + ' 请使用匹配的电源。')
                 draft.focus()
                 page.wait_for_timeout(2500)

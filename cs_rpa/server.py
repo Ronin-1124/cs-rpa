@@ -224,7 +224,7 @@ class Handler(MockHandler):
                 action = data['action']
                 if action == 'approve':
                     if item['status'] != 'draft':
-                        raise ValueError('这条回复已不在待审核状态')
+                        raise ValueError('这条回复已不在草稿状态')
                     reply = str(data.get('reply', item['reply'])).strip()
                     if not reply or len(reply) > 2000:
                         raise ValueError('回复长度必须为 1–2000 字')
