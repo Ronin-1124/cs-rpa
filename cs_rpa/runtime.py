@@ -138,6 +138,9 @@ class Runtime:
                         messages = adapter.open_customer(customer['name'])
                         old_ids = {m['id'] for m in self.db.history(prior['id'], 500)} if prior else set()
                         cid, changed = self.db.ingest(config['transport'], config['shop'], customer['customer_key'], customer['name'], messages)
+                        messages = self.db.filter_deleted(cid, messages)
+                        if not self.db.one('SELECT id FROM conversations WHERE id=?', (cid,)):
+                            continue
                         if hasattr(adapter, 'mark_read_snapshot'):
                             adapter.mark_read_snapshot(customer)
                         if initial:

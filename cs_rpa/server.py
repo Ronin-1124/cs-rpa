@@ -141,6 +141,17 @@ class Handler(MockHandler):
             data = json.loads(self.rfile.read(size) or '{}')
             if not isinstance(data, dict):
                 raise ValueError('请求格式错误')
+            if path == '/api/manage/data/export':
+                from cs_rpa.data_management import export_workspace
+                payload = export_workspace(self.app, data.get('include_secrets', False))
+                self.send_response(200)
+                self.send_header('Content-Type', 'application/zip')
+                self.send_header('Content-Disposition', 'attachment; filename="cs-rpa-workspace.zip"')
+                self.send_header('Content-Length', str(len(payload)))
+                self.send_header('Cache-Control', 'no-store')
+                self.end_headers()
+                self.wfile.write(payload)
+                return
             result = self.manage(path.removeprefix('/api/manage/'), data)
             return self._json(200, {'ok': True, **(result or {})})
         except (ValueError, TypeError, KeyError) as exc:
@@ -153,6 +164,14 @@ class Handler(MockHandler):
 
     def manage(self, path, data):
         app, db = self.app, self.app.db
+        if path == 'data/delete':
+            from cs_rpa.data_management import delete_conversations
+            if data.get('confirmation') != '删除':
+                raise ValueError('请输入“删除”确认操作')
+            action = data.get('action')
+            if action not in ('clear', 'delete', 'delete_all'):
+                raise ValueError('未知删除操作')
+            return delete_conversations(app, data.get('id'), keep_customer=action == 'clear', all_customers=action == 'delete_all')
         if path.startswith('runtime/'):
             action = path.split('/')[-1]
             if action not in ('start', 'pause', 'stop'):

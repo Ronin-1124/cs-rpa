@@ -5,7 +5,7 @@ const esc = v => String(v ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt
 const icon = name => `<i data-lucide="${name}"></i>`;
 const labels = {stopped:"未启动",starting:"启动中",running:"接待中",paused:"已暂停",stopping:"停止中",waiting_login:"等待登录",error:"需检查",active:"接待中",collecting:"收集需求",waiting:"等待同事",human:"同事接管",draft:"待审核",ready:"排队中",sending:"发送中",sent:"已发送",stale:"已过期",uncertain:"待核对",cancelled:"已取消",open:"待处理",resolved:"已完成",pending:"未通知",failed:"通知失败",ignored:"无需回复"};
 const fields = {product:"产品型号",requirements:"定制内容",quantity:"数量",deadline:"期望交期",contact:"联系方式",company:"公司或称呼"};
-const viewNames = {overview:"运行总览",conversations:"客户会话",tasks:"同事待办",knowledge:"业务知识",models:"模型配置",settings:"接待设置"};
+const viewNames = {overview:"运行总览",conversations:"客户会话",tasks:"同事待办",knowledge:"业务知识",models:"模型配置",settings:"接待设置",data:"数据管理"};
 let state, activeView="overview", selectedCustomer="", initialized=false, toastTimer, historyVersion="", historyGeneration=0;
 const edits = new Map(), taskResults = new Map();
 function hydrate(){lucide.createIcons({attrs:{"stroke-width":1.7}});}
@@ -44,6 +44,10 @@ function renderReplies(){
   setHTML($('#outbox'),state.outbox.length?state.outbox.map(o=>`<div class="reply-card" data-id="${esc(o.id)}"><div class="card-title"><b>${esc(o.name)}</b>${badge(o.status)}<time>${date(o.created)}</time></div>${o.status==='draft'?`<textarea data-edit="${esc(o.id)}" aria-label="${esc(o.name)}的待审核回复" maxlength="2000">${esc(edits.get(o.id)??o.reply)}</textarea>`:`<p>${esc(o.reply)}</p>`}${o.reason?`<p class="reason">${esc(o.reason)}</p>`:''}<div class="card-actions">${o.status==='draft'?'<button class="button quiet" data-outbox="cancel">取消</button><button class="button primary" data-outbox="approve">审核通过</button>':o.status==='uncertain'?'<button class="button secondary" data-outbox="cancel">核对后取消</button><button class="button primary" data-outbox="confirmed">确认网页已发送</button>':''}</div></div>`).join(''):empty('暂无待处理回复','新消息生成的回复会出现在这里。审核模式下，确认后才会加入发送队列。','file-pen-line'));
 }
 function renderConversations(){
+  if(selectedCustomer&&!state.conversations.some(c=>c.id===selectedCustomer)){
+    selectedCustomer='';historyVersion='';historyGeneration++;
+    $('#conversation-detail').innerHTML=empty('选择一个客户','客户记录已更新。');
+  }
   if(!selectedCustomer&&state.conversations.length)selectedCustomer=state.conversations[0].id;
   setHTML($('#conversation-list'),state.conversations.length?state.conversations.map(c=>`<button class="customer-row ${c.id===selectedCustomer?'active':''}" data-customer="${esc(c.id)}"><b>${esc(c.name)}</b>${badge(c.state)}<small>${esc(c.shop)}</small></button>`).join(''):empty('暂无客户','开始接待后自动同步。'));
 }
@@ -59,7 +63,7 @@ async function loadHistory(force=false){
     if(token!==historyGeneration)return;
     historyVersion=version;
     const d=data.conversation;
-    $('#conversation-detail').innerHTML=`<div class="customer-detail-header"><div><h2>${esc(d.name)}</h2><p>${esc(d.shop)} · ${d.platform==='mock'?'模拟环境':'京东京麦'}</p></div><button class="button secondary" data-takeover="${d.state==='human'?'resume':'takeover'}">${d.state==='human'?'恢复接待':'同事接管'}</button></div><div class="chat-history">${data.messages.map(m=>`<div class="chat-turn ${m.role==='agent'?'agent':''}"><small>${m.role==='agent'?'客服同事':m.role==='customer'?'客户':'系统'} · ${esc(m.timestamp)}</small><p>${esc(m.text)}</p></div>`).join('')}</div>${Object.keys(d.fields).length?`<dl class="customer-fields">${Object.entries(d.fields).map(([k,v])=>`<dt>${esc(fields[k]||k)}</dt><dd>${esc(v)}</dd>`).join('')}</dl>`:''}`;
+    $('#conversation-detail').innerHTML=`<div class="customer-detail-header"><div><h2>${esc(d.name)}</h2><p>${esc(d.shop)} · ${d.platform==='mock'?'模拟环境':'京东京麦'}</p></div><button class="button secondary" data-takeover="${d.state==='human'?'resume':'takeover'}">${d.state==='human'?'恢复接待':'同事接管'}</button><button class="button quiet" data-delete="clear">清空聊天</button><button class="button danger" data-delete="delete">删除客户</button></div><div class="chat-history">${data.messages.map(m=>`<div class="chat-turn ${m.role==='agent'?'agent':''}"><small>${m.role==='agent'?'客服同事':m.role==='customer'?'客户':'系统'} · ${esc(m.timestamp)}</small><p>${esc(m.text)}</p></div>`).join('')}</div>${Object.keys(d.fields).length?`<dl class="customer-fields">${Object.entries(d.fields).map(([k,v])=>`<dt>${esc(fields[k]||k)}</dt><dd>${esc(v)}</dd>`).join('')}</dl>`:''}`;
     const box=$('.chat-history');box.scrollTop=box.scrollHeight;hydrate();
   }catch(e){toast(e.message,true);}
 }
@@ -110,7 +114,7 @@ document.addEventListener('click',e=>{
   if(button.dataset.command)perform(button,async()=>{await api('runtime/'+button.dataset.command,{});});
   if(button.dataset.customer){selectedCustomer=button.dataset.customer;renderConversations();loadHistory(true);}
   if(button.dataset.takeover)perform(button,async()=>{await api('conversation',{id:selectedCustomer,action:button.dataset.takeover});historyVersion='';});
-  if(button.dataset.outbox)perform(button,async()=>{const id=button.closest('[data-id]').dataset.id;await api('outbox',{id,action:button.dataset.outbox,...(edits.has(id)?{reply:edits.get(id)}:{})});edits.delete(id);toast(button.dataset.outbox==='approve'?'已加入发送队列；运行接待时将核对并发送。':'已保存处理结果');});
+  if(button.dataset.outbox)perform(button,async()=>{const id=button.closest('[data-id]').dataset.id;await api('outbox',{id,action:button.dataset.outbox,...(edits.has(id)?{reply:edits.get(id)}:{})});edits.delete(id);toast(button.dataset.outbox==='approve'?'已加入发送队列，接待运行时由 RPA 发送。':'已保存处理结果');});
   if(button.hasAttribute('data-resolve'))perform(button,async()=>{const id=button.closest('[data-id]').dataset.id;const result=taskResults.get(id)||'';if(!result.trim())throw new Error('请先填写处理结果');await api('tasks/resolve',{id,result});taskResults.delete(id);toast('处理结果已保存，运行接待时继续处理。');});
   if(button.dataset.profile){const id=button.closest('[data-id]').dataset.id;if(button.dataset.profile==='edit')fillProfile(state.profiles.items.find(p=>p.id===id));else perform(button,async()=>{const result=await api('profiles/'+button.dataset.profile,{id});if(button.dataset.profile==='test')toast(result.ok?`${result.model} 连接正常 · ${result.seconds} 秒`:'接口已返回，但测试内容未符合预期',!result.ok);else toast('已切换当前模型');});}
   if(button.dataset.knowledge)perform(button,async()=>{await api('knowledge/toggle',{id:button.dataset.knowledge,enabled:button.dataset.enabled==='1'});await loadKnowledge();});
@@ -119,7 +123,7 @@ document.addEventListener('input',e=>{if(e.target.dataset.edit)edits.set(e.targe
 $('#profile-form').addEventListener('submit',e=>{e.preventDefault();perform($('button[type=submit]',e.target),async()=>{const data=Object.fromEntries(new FormData(e.target));const saved=await api('profiles/save',data);e.target.elements.id.value=saved.id;e.target.elements.api_key.value='';e.target.elements.api_key.required=false;toast('模型连接已保存');});});
 $('#new-profile').addEventListener('click',()=>fillProfile());
 $('#settings-form').addEventListener('submit',e=>{e.preventDefault();perform($('button[type=submit]',e.target),async()=>{const form=new FormData(e.target);const data=Object.fromEntries(form);data.custom_fields=form.getAll('custom_field');data.feishu_enabled=e.target.elements.feishu_enabled.checked;delete data.custom_field;await api('settings',data);e.target.elements.feishu_webhook.value='';e.target.elements.feishu_secret.value='';toast('接待设置已保存，下次启动生效');});});
-$('#import-project').addEventListener('click',e=>perform(e.currentTarget,async()=>{const data=await api('knowledge/import-project',{});toast(data.results.map(r=>r.error?`${r.file}：${r.error}`:`${r.file}：新增 ${r.inserted}，重复 ${r.duplicates}`).join('；')||'项目根目录没有 CSV 文件');await loadKnowledge();}));
+$('#import-project').addEventListener('click',e=>perform(e.currentTarget,async()=>{const data=await api('knowledge/import-project',{});toast(data.results.map(r=>r.error?`${r.file}：${r.error}`:`${r.file}：新增 ${r.inserted}，重复 ${r.duplicates}`).join('；')||'data/raw/ 中没有 CSV 文件');await loadKnowledge();}));
 $('#csv-file').addEventListener('change',async e=>{const file=e.target.files[0];if(!file)return;try{if(file.size>4000000)throw new Error('请选择 4 MB 以内的文件');const bytes=await file.arrayBuffer();let text;try{text=new TextDecoder('utf-8',{fatal:true}).decode(bytes);}catch{text=new TextDecoder('gb18030').decode(bytes);}const data=await api('knowledge/import',{filename:file.name,text});toast(`新增 ${data.inserted} 条，跳过 ${data.duplicates} 条重复记录。`);await refresh();await loadKnowledge();}catch(err){toast(err.message,true);}finally{e.target.value='';}});
 let searchTimer;$('#knowledge-search').addEventListener('input',()=>{clearTimeout(searchTimer);searchTimer=setTimeout(loadKnowledge,250);});
 $('#add-knowledge').addEventListener('click',()=>$('#knowledge-dialog').showModal());
@@ -127,3 +131,31 @@ $('#close-dialog').addEventListener('click',()=>$('#knowledge-dialog').close());
 $('#knowledge-form').addEventListener('submit',e=>{e.preventDefault();perform($('button[type=submit]',e.target),async()=>{await api('knowledge/save',Object.fromEntries(new FormData(e.target)));e.target.reset();$('#knowledge-dialog').close();await loadKnowledge();toast('知识已保存');});});
 hydrate();
 (async function poll(){try{await refresh();}catch{const el=$('#connection');el.textContent='连接中断';}setTimeout(poll,2000);})();
+
+let deletionRequest=null;
+document.addEventListener('click',e=>{
+  const button=e.target.closest('[data-delete]');if(!button)return;
+  if(state.runtime.running){toast('请先停止接待并等待结束，再清理数据。',true);return;}
+  const action=button.dataset.delete;
+  deletionRequest={action,id:action==='delete_all'?undefined:selectedCustomer};
+  const name=state.conversations.find(c=>c.id===selectedCustomer)?.name||'';
+  $('#delete-title').textContent=action==='clear'?'清空聊天':action==='delete'?'删除客户':'删除全部客户与聊天';
+  $('#delete-description').textContent=action==='delete_all'?'删除全部本地客户和关联记录，保留知识与配置。':
+    `将${action==='clear'?'清空':'删除'}「${name}」的聊天、草稿、待办和流程记忆。${action==='clear'?'保留客户。':'同时删除客户。'}模拟页记录会同步清理，京麦服务器记录不受影响。`;
+  $('#delete-form').reset();$('#delete-dialog').showModal();
+});
+$('#close-delete').addEventListener('click',()=>$('#delete-dialog').close());
+$('#delete-form').addEventListener('submit',e=>{
+  e.preventDefault();const request={...deletionRequest,confirmation:e.target.elements.confirmation.value};
+  perform($('button[type=submit]',e.target),async()=>{
+    await api('data/delete',request);historyVersion='';historyGeneration++;edits.clear();taskResults.clear();
+    $('#delete-dialog').close();toast('本地记录已清理');
+  });
+});
+$('#export-data').addEventListener('click',e=>perform(e.currentTarget,async()=>{
+  const response=await fetch('/api/manage/data/export',{method:'POST',headers:{'Content-Type':'application/json','X-CS-RPA':'1'},body:JSON.stringify({include_secrets:$('#export-secrets').checked})});
+  if(!response.ok)throw new Error((await response.json()).error||'导出失败');
+  const url=URL.createObjectURL(await response.blob());const a=document.createElement('a');
+  a.href=url;a.download='cs-rpa-workspace-'+new Date().toISOString().replace(/[:.]/g,'-')+'.zip';
+  document.body.append(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),30000);toast('迁移包已生成，请查看浏览器下载');
+}));

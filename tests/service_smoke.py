@@ -198,6 +198,37 @@ def main():
                 expect(control.locator('.c_tabs-tab_check')).to_have_attribute('title', '正在咨询')
                 expect(control.locator('.message__content').first).to_be_visible()
                 control.screenshot(path=str(output / 'workbench.png'), full_page=True)
+                page.set_viewport_size({'width': 1366, 'height': 960})
+                page.locator('[data-view=data]').click()
+                expect(page.locator('#view-data')).to_be_visible()
+                page.screenshot(path=str(output / 'data-management.png'), full_page=True)
+                with page.expect_download() as download_info:
+                    page.locator('#export-data').click()
+                download = download_info.value
+                migration_path = output / 'workspace.zip'
+                download.save_as(migration_path)
+                from cs_rpa.data_management import restore_workspace
+                restored = restore_workspace(migration_path, Path(directory) / 'restored')
+                assert Path(restored['directory'], 'business.sqlite3').exists()
+                page.locator('.nav-item[data-view=conversations]').click()
+                expect(page.locator('[data-delete=clear]')).to_be_visible()
+                page.locator('[data-delete=clear]').click()
+                page.locator('#delete-form input').fill('删除')
+                page.locator('#delete-form button[type=submit]').click()
+                expect(page.locator('#delete-dialog')).not_to_be_visible()
+                expect(page.locator('.chat-history .chat-turn')).to_have_count(0)
+                page.locator('[data-delete=delete]').click()
+                page.locator('#delete-form input').fill('删除')
+                page.locator('#delete-form button[type=submit]').click()
+                expect(page.locator('#conversation-list .customer-row')).to_have_count(1)
+                page.locator('[data-view=data]').click()
+                page.locator('[data-delete=delete_all]').click()
+                page.locator('#delete-form input').fill('删除')
+                page.locator('#delete-form button[type=submit]').click()
+                expect(page.locator('#stat-conversations')).to_have_text('0')
+                assert not app.fixture.list_users()
+                assert not app.db.rows('SELECT * FROM tasks')
+                assert app.db.rows('SELECT * FROM knowledge')
                 assert not errors, errors
                 report = {'ok': True, 'live_model': args.live_model, 'virtual_contacts': virtual_contacts, 'counts': app.state()['counts'],
                           'browser_errors': errors, 'runtime': app.runtime.status()}

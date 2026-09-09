@@ -49,6 +49,7 @@ class Database:
                 product TEXT, sources TEXT, enabled INTEGER DEFAULT 1, updated REAL);
             CREATE TABLE IF NOT EXISTS events(id INTEGER PRIMARY KEY AUTOINCREMENT,
                 kind TEXT, text TEXT, created REAL);
+            CREATE TABLE IF NOT EXISTS deleted_messages(token TEXT PRIMARY KEY);
             CREATE TABLE IF NOT EXISTS knowledge_materials(id TEXT PRIMARY KEY,
                 kind TEXT, status TEXT, payload TEXT, batch TEXT);
             CREATE VIRTUAL TABLE IF NOT EXISTS knowledge_fts USING fts5(title,body);
@@ -102,6 +103,9 @@ class Database:
         cid = hashlib.sha256(json.dumps([platform, shop, customer_key]).encode()).hexdigest()[:32]
         now = time.time()
         with self.lock, self.conn:
+            messages = self.filter_deleted(cid, messages)
+            if not messages and not self.one('SELECT id FROM conversations WHERE id=?', (cid,)):
+                return cid, False
             self.conn.execute("INSERT OR IGNORE INTO conversations(id,platform,shop,customer_key,name,updated) VALUES(?,?,?,?,?,?)",
                               (cid, platform, shop, customer_key, name, now))
             self.conn.execute("UPDATE conversations SET name=? WHERE id=?", (name, cid))
@@ -116,6 +120,14 @@ class Database:
                 self.conn.execute("UPDATE conversations SET latest_id=?,updated=?,failures=0,retry_after=0 WHERE id=?", (latest, now, cid))
                 self.conn.execute("UPDATE outbox SET status='stale',reason='会话已有新消息',updated=? WHERE conversation_id=? AND source_id<>? AND status IN ('draft','ready')", (now, cid, latest))
         return cid, bool(new)
+
+    @staticmethod
+    def deletion_token(cid, source_id):
+        return hashlib.sha256((cid + ':' + str(source_id or '')).encode()).hexdigest()
+
+    def filter_deleted(self, cid, messages):
+        return [m for m in messages if not self.one('SELECT 1 FROM deleted_messages WHERE token=?',
+                (self.deletion_token(cid, m.get('id', '')),))]
 
     def conversation(self, cid):
         row = self.one("SELECT * FROM conversations WHERE id=?", (cid,))
