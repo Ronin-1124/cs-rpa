@@ -5,11 +5,12 @@ import concurrent.futures
 import sqlite3
 import threading
 import time
+from datetime import datetime
 
 from langgraph.checkpoint.sqlite import SqliteSaver
 from langgraph.types import Command
 
-from cs_rpa.browser import BrowserAdapter
+from cs_rpa.browser import BrowserAdapter, BrowserNotReady
 from cs_rpa.models import ModelClient, ModelError
 from cs_rpa.notifications import notify_task
 from cs_rpa.workflow import Workflow
@@ -25,11 +26,12 @@ class Runtime:
         self.state, self.detail = 'stopped', '尚未启动'
         self.processed = 0
         self.generation = 0
+        self.baseline_count = 0
 
     def status(self):
         with self.lock:
             return {'state': self.state, 'detail': self.detail, 'processed': self.processed,
-                    'running': bool(self.thread and self.thread.is_alive())}
+                    'running': bool(self.thread and self.thread.is_alive()), 'baseline_count': self.baseline_count}
 
     def start(self):
         with self.lock:
@@ -66,6 +68,10 @@ class Runtime:
     def _run(self):
         config = self.settings.runtime()
         adapter = self.adapter_factory(config, self.db.path.parent)
+        adapter.cancelled = self.stop_event.is_set
+        started_at = time.time()
+        baselined = set()
+        self.baseline_count = 0
         checkpoint_conn = sqlite3.connect(self.db.path.parent / 'checkpoints.sqlite3', check_same_thread=False)
         pool = concurrent.futures.ThreadPoolExecutor(max_workers=2, thread_name_prefix='cs-rpa-model')
         graph = Workflow(self.db, self.settings, self.knowledge, SqliteSaver(checkpoint_conn), self.model_factory).graph
@@ -105,25 +111,43 @@ class Runtime:
                     continue
                 try:
                     customers = adapter.customers()
-                except Exception:
+                except Exception as exc:
                     with self.lock:
                         if self.state != 'paused':
-                            self.state, self.detail = 'waiting_login', '等待浏览器登录或客服页面恢复'
+                            state = 'waiting_login' if isinstance(exc, BrowserNotReady) else 'error'
+                            detail = str(exc) if isinstance(exc, BrowserNotReady) else f'客服列表读取失败（{type(exc).__name__}），请检查页面遮挡或页面结构变化'
+                            if (self.state, self.detail) != (state, detail):
+                                self.db.event('browser', detail)
+                            self.state, self.detail = state, detail
                     self.stop_event.wait(2)
                     continue
                 with self.lock:
-                    if self.state == 'waiting_login':
+                    if self.state in ('waiting_login', 'error'):
                         self.state, self.detail = 'running', '客服页面已连接'
                 for customer in customers:
                     if self.stop_event.is_set() or self.state == 'paused':
                         break
                     try:
-                        messages = adapter.open_customer(customer['name'])
-                        prior = self.db.one('SELECT id,latest_id FROM conversations WHERE platform=? AND shop=? AND customer_key=?',
+                        prior = self.db.one('SELECT * FROM conversations WHERE platform=? AND shop=? AND customer_key=?',
                             (config['transport'], config['shop'], customer['customer_key']))
+                        initial = config['transport'] != 'mock' and customer.get('initial_history', False) and customer['customer_key'] not in baselined
+                        ready_task = prior and self.db.one("SELECT id FROM tasks WHERE conversation_id=? AND status='ready' LIMIT 1", (prior['id'],))
+                        needs_plan = prior and prior['latest_id'] != prior['handled_id'] and prior['state'] in ('active', 'collecting') and prior['retry_after'] <= time.time() and prior['id'] not in pending
+                        if hasattr(adapter, 'should_read') and not adapter.should_read(customer, force=bool(initial or ready_task or needs_plan)):
+                            continue
+                        messages = adapter.open_customer(customer['name'])
                         old_ids = {m['id'] for m in self.db.history(prior['id'], 500)} if prior else set()
                         cid, changed = self.db.ingest(config['transport'], config['shop'], customer['customer_key'], customer['name'], messages)
-                        if prior:
+                        if hasattr(adapter, 'mark_read_snapshot'):
+                            adapter.mark_read_snapshot(customer)
+                        if initial:
+                            baselined.add(customer['customer_key'])
+                            if self.baseline_history(cid, messages, started_at):
+                                with self.lock:
+                                    self.baseline_count += 1
+                                    self.detail = f'已初始化 {self.baseline_count} 个历史会话，仅处理新消息；无变化会话每 60 秒复核'
+                                continue
+                        if prior and not initial:
                             for msg in messages:
                                 if msg['role'] == 'agent' and msg['id'] not in old_ids:
                                     own = self.db.one("SELECT id FROM outbox WHERE conversation_id=? AND status='sent' AND (sent_source_id=? OR (sent_source_id='' AND reply=?))", (cid, msg['id'], msg['text']))
@@ -188,6 +212,23 @@ class Runtime:
         return {'conversation_id': conversation['id'], 'source_id': conversation['latest_id'],
                 'messages': self.db.history(conversation['id']), 'fields': conversation['fields'],
                 'employee_result': employee_result, 'task_id': '', 'plan': {}, 'evidence': [], 'reply': '', 'action': ''}
+
+    def baseline_history(self, cid, messages, started_at):
+        """Do not generate replies to old transcripts; preserve messages arriving during setup."""
+        if messages:
+            raw = ' '.join(messages[-1].get('timestamp', '').split())
+            try:
+                now = datetime.fromtimestamp(started_at)
+                stamp = datetime.strptime(raw, '%m-%d %H:%M:%S').replace(year=now.year)
+                if stamp.timestamp() > started_at + 86400:
+                    stamp = stamp.replace(year=now.year - 1)
+                if stamp.timestamp() >= int(started_at):
+                    return False
+            except ValueError:
+                # If the page omits a usable timestamp, first observation is the baseline.
+                pass
+        self.db.execute('UPDATE conversations SET handled_id=latest_id WHERE id=?', (cid,))
+        return True
 
     def _deliver(self, adapter):
         for item in self.db.rows("SELECT * FROM outbox WHERE status='ready' ORDER BY created LIMIT 20"):

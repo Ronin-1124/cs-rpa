@@ -10,6 +10,71 @@ from playwright.sync_api import expect, sync_playwright
 
 from cs_rpa.database import ROOT
 from cs_rpa.server import create_server
+from cs_rpa.browser import BrowserAdapter
+
+
+def check_virtual_contacts(playwright):
+    """Exercise the real adapter against a routed page, without contacting JD."""
+    browser = playwright.chromium.launch(channel='msedge', headless=True)
+    context = browser.new_context()
+    html = '''<!doctype html><meta charset="utf-8">
+    <div class="c_tabs-tabpane">其他插件面板</div>
+    <div id="t-alluser-wrap"><div class="c_tabs">
+    <div class="c_tabs-nav-container">
+      <div class="c_tabs-tab" title="正在咨询">正在咨询</div>
+      <div class="c_tabs-tab c_tabs-tab_check" title="历史咨询">历史咨询</div>
+    </div><div class="c_tabs-content">
+    <div class="c_tabs-tabpane c_tabs-tab_inactive" id="consulting">正在咨询(23)
+      <div id="scroller" style="height:120px;width:300px;overflow-y:auto;position:relative">
+        <div id="spacer" style="height:690px;position:relative"></div>
+      </div>
+    </div><div class="c_tabs-tabpane" id="history">最近联系人(99)</div>
+    </div></div></div>
+    <div class="chat-head-name"><span></span></div>
+    <div id="t-chat-scroll"></div><div class="EditorContent" contenteditable="true" style="min-height:30px"></div>
+    <script>
+    document.querySelector('[title="正在咨询"]').onclick=()=>{
+      document.querySelector('[title="正在咨询"]').classList.add('c_tabs-tab_check');
+      document.querySelector('[title="历史咨询"]').classList.remove('c_tabs-tab_check');
+      document.querySelector('#consulting').classList.remove('c_tabs-tab_inactive');
+      document.querySelector('#history').classList.add('c_tabs-tab_inactive');
+    };
+    const scroller=document.querySelector('#scroller'),spacer=document.querySelector('#spacer');
+    function render(){
+      const first=Math.floor(scroller.scrollTop/30);spacer.innerHTML='';
+      for(let i=first;i<Math.min(23,first+5);i++){
+        const row=document.createElement('div');row.className='alluser-item';
+        row.style.cssText=`position:absolute;top:${i*30}px;height:30px;width:290px`;
+        row.innerHTML=`<span class="alluser-item-name">客户${i+1}</span><span class="alluser-item-breifdesc">问供电</span>`;
+        row.onclick=()=>{
+          document.querySelector('.chat-head-name span').textContent=`客户${i+1}`;
+          setTimeout(()=>document.querySelector('#t-chat-scroll').innerHTML=
+            `<div class="message"><div class="message_left" id="s_${i+1}"><span class="message__content">客户${i+1}的问题</span></div></div>`,200);
+        };spacer.appendChild(row);
+      }
+    }
+    scroller.addEventListener('scroll',render);render();
+    </script>'''
+    context.route('**/*', lambda route: route.fulfill(status=200, content_type='text/html', body=html))
+    page = context.new_page()
+    page.goto('https://dongdong.jd.com/')
+    adapter = BrowserAdapter({'transport': 'jingmai', 'max_sessions': 100}, ROOT / 'artifacts')
+    adapter.context, adapter.page = context, page
+    try:
+        contacts = adapter.customers()
+        expect(page.locator('[title="正在咨询"]')).to_have_class('c_tabs-tab c_tabs-tab_check')
+        assert len(contacts) == 23 and len({c['customer_key'] for c in contacts}) == 23
+        assert all(c['initial_history'] for c in contacts)
+        assert adapter.open_customer('客户1')[-1]['id'] == 's_1'
+        assert adapter.open_customer('客户23')[-1]['id'] == 's_23'
+        adapter.mark_read_snapshot(contacts[0])
+        assert not adapter.should_read(contacts[0])
+        page.evaluate("document.querySelector('#consulting').innerHTML='正在咨询(0)'")
+        assert adapter.customers() == []
+        return len(contacts)
+    finally:
+        adapter.close()
+        browser.close()
 
 
 class FixtureModel:
@@ -52,6 +117,7 @@ def main():
                                            'api_key': 'fixture-key', 'model': 'fixture'})
             app.settings.save_runtime({'poll_seconds': 1, 'merge_seconds': 0})
             with sync_playwright() as playwright:
+                virtual_contacts = check_virtual_contacts(playwright)
                 browser = playwright.chromium.launch(channel='msedge', headless=True)
                 page = browser.new_page(viewport={'width': 1440, 'height': 1000})
                 page.on('pageerror', lambda error: errors.append(str(error)))
@@ -133,7 +199,7 @@ def main():
                 expect(control.locator('.message__content').first).to_be_visible()
                 control.screenshot(path=str(output / 'workbench.png'), full_page=True)
                 assert not errors, errors
-                report = {'ok': True, 'live_model': args.live_model, 'counts': app.state()['counts'],
+                report = {'ok': True, 'live_model': args.live_model, 'virtual_contacts': virtual_contacts, 'counts': app.state()['counts'],
                           'browser_errors': errors, 'runtime': app.runtime.status()}
                 (output / 'report.json').write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding='utf-8')
                 print(json.dumps(report, ensure_ascii=False), flush=True)

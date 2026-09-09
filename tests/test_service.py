@@ -273,6 +273,20 @@ class ServiceCase(unittest.TestCase):
         self.assertEqual(json.loads(task['fields'])['product'], 'TEST-1')
         self.assertEqual(self.db.one("SELECT reply FROM outbox WHERE source_id='m3'")['reply'], '这个需要进一步确认，我帮您看看，稍等。')
 
+    def test_confirmed_results_use_customer_service_voice_and_keep_qualifiers(self):
+        for original, expected in [
+            ('同事提到我们这边有一款 TEST-1，库存还需要核实。', '这边帮您确认到，有一款 TEST-1，库存还需要核实。'),
+            ('同事帮您确认了，TEST-1 暂时没货。', '这边帮您确认到，TEST-1 暂时没货。'),
+            ('这边暂时还无法确认 TEST-1 的库存。', '这边暂时还无法确认 TEST-1 的库存。'),
+        ]:
+            with self.subTest(original=original):
+                workflow = Workflow(self.db, self.settings, self.knowledge, SqliteSaver(self.checkpoints))
+                state = {**self.value(), 'employee_result': '有 TEST-1 这个型号；库存尚未确认。',
+                         'plan': {'intent': 'consult', 'reply': original, 'fields': {}}}
+                result = workflow.validate(state)
+                self.assertEqual(result['reply'], expected)
+                self.assertEqual(result['action'], 'reply')
+
     def test_cancel_during_browser_preparation_is_not_restored_to_draft(self):
         oid = self.db.prepare_reply(self.cid, 'm1', '回复', 'ready')
         runtime = Runtime(self.db, self.settings, self.knowledge)

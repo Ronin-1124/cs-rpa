@@ -48,7 +48,7 @@ function renderLists() {
   const term = $("#t-search_input").value.trim().toLowerCase();
   const filter = s => s.buyer_id.toLowerCase().includes(term) && (!$(".unread-filter").checked || s.unread > 0);
   const streams = $$(".c_stream-content");
-  const values = [group("正在咨询",state.consulting.filter(filter)) + group("留言",state.recent.filter(s=>s.unread>0).filter(filter)) + group("内部会话&群聊",[]), group("专享顾客",[]) + group("最近联系人",state.recent.filter(filter))];
+  const values = [group("正在咨询",state.consulting.filter(filter)) + group("留言",state.recent.filter(s=>!s.in_consult && s.unread>0).filter(filter)) + group("内部会话&群聊",[]), group("专享顾客",[]) + group("最近联系人",state.recent.filter(filter))];
   streams.forEach((e,i) => {if (e.innerHTML !== values[i]) e.innerHTML = values[i];});
   $(".today-count").textContent = state.consulting.length;
   hydrateIcons();

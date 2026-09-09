@@ -48,7 +48,7 @@ class Store:
             consulting = [s for s in recent if s["in_consult"]]
             return {"version": 2, "rev": data["rev"], "users": self.list_users(),
                     "consulting": consulting, "recent": recent,
-                    "groups": {"正在咨询": len(consulting), "留言": sum(s["unread"] > 0 for s in recent)}}
+                    "groups": {"正在咨询": len(consulting), "留言": sum(not s["in_consult"] and s["unread"] > 0 for s in recent)}}
 
     def list_users(self) -> list[dict]:
         with self._lock:

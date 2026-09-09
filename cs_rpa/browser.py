@@ -10,9 +10,15 @@ from urllib.parse import urlparse
 from playwright.sync_api import expect, sync_playwright
 from playwright._impl._errors import TargetClosedError
 
-ROWS = '.c_tabs-tabpane:not(.c_tabs-tab_inactive) .alluser-item:visible'
+ACTIVE_PANE = '#t-alluser-wrap > .c_tabs > .c_tabs-content > .c_tabs-tabpane:not(.c_tabs-tab_inactive)'
+ROWS = ACTIVE_PANE + ' .alluser-item:visible'
 EDITOR = '.EditorContent[contenteditable=true]'
 HEADER = '.chat-head-name > span'
+CONSULTING_TAB = '#t-alluser-wrap .c_tabs-nav-container > .c_tabs-tab[title="正在咨询"]'
+
+
+class BrowserNotReady(RuntimeError):
+    """Safe, actionable status text without login URLs or customer data."""
 
 
 def comparable_text(text):
@@ -26,6 +32,76 @@ class BrowserAdapter:
         self.playwright = self.context = self.page = None
         self.cursor = 0
         self.confirmed_message = None
+        self.initial_keys = None
+        self.read_cache = {}
+        self.cancelled = lambda: False
+
+    def should_read(self, customer, force=False):
+        if self.config['transport'] == 'mock' or force:
+            return True
+        previous = self.read_cache.get(customer['customer_key'])
+        fingerprint = (customer.get('preview', ''), customer.get('date', ''))
+        return not previous or previous[0] != fingerprint or time.monotonic() - previous[1] >= 60
+
+    def mark_read_snapshot(self, customer):
+        self.read_cache[customer['customer_key']] = ((customer.get('preview', ''), customer.get('date', '')), time.monotonic())
+
+    def scroll_contacts(self, top=False):
+        # Locate the actual scrollable ancestor, including virtualized list wrappers.
+        return self.page.locator(ACTIVE_PANE).evaluate("""(pane, top) => {
+            let node = pane.querySelector('.alluser-item');
+            while (node && pane.contains(node)) {
+                if (node.clientHeight > 0 && node.scrollHeight > node.clientHeight + 1 &&
+                    /auto|scroll/.test(getComputedStyle(node).overflowY)) {
+                    const before = node.scrollTop;
+                    node.scrollTop = top ? 0 : Math.min(node.scrollHeight, before + node.clientHeight * .8);
+                    return {moved: node.scrollTop !== before, bottom: node.scrollTop + node.clientHeight >= node.scrollHeight - 2};
+                }
+                node = node.parentElement;
+            }
+            return {moved: false, bottom: true};
+        }""", top)
+
+    def contact_rows(self):
+        return self.page.locator(ROWS).evaluate_all("""rows => rows.map(row => ({
+            name: row.querySelector('.alluser-item-name')?.textContent?.trim() || '',
+            customer_key: row.getAttribute('data-user-id') || '',
+            preview: row.querySelector('.alluser-item-breifdesc')?.textContent || '',
+            date: row.querySelector('.alluser-item-date-w')?.textContent || ''
+        })).filter(row => row.name)""")
+
+    def collect_contacts(self):
+        found, ambiguous = {}, set()
+        real = self.config['transport'] != 'mock'
+        if real:
+            self.scroll_contacts(top=True)
+            self.page.wait_for_timeout(150)
+        bottom_checks = 0
+        for _ in range(100 if real else 1):
+            if self.cancelled():
+                raise BrowserNotReady('正在停止联系人扫描')
+            rows = self.contact_rows()
+            names = [r['name'] for r in rows]
+            ambiguous.update(name for name in names if names.count(name) > 1)
+            before = len(found)
+            for item in rows:
+                item['customer_key'] = item['customer_key'] or 'name:' + item['name']
+                found[item['customer_key']] = item
+            if not real:
+                break
+            movement = self.scroll_contacts()
+            bottom_checks = bottom_checks + 1 if movement['bottom'] and not movement['moved'] and len(found) == before else 0
+            if bottom_checks >= 2:
+                break
+            self.page.wait_for_timeout(200)
+        else:
+            raise BrowserNotReady('联系人列表尚未完整扫描，未启动历史初始化；请检查列表加载')
+        if real:
+            text = self.page.locator(ACTIVE_PANE).inner_text()
+            count = re.search(r'最近联系人\s*[（(](\d+)[）)]', text)
+            if count and len(found) < int(count[1]):
+                raise BrowserNotReady(f'联系人尚未完整加载：已读取 {len(found)} / {count[1]}，正在重试')
+        return [item for item in found.values() if item['name'] not in ambiguous]
 
     def start(self):
         self.playwright = sync_playwright().start()
@@ -50,27 +126,43 @@ class BrowserAdapter:
             if url.scheme != 'http' or url.hostname not in ('127.0.0.1', 'localhost', '::1'):
                 raise RuntimeError('模拟适配器拒绝操作非本地页面')
         elif url.scheme != 'https' or url.hostname != 'dongdong.jd.com':
-            raise RuntimeError('请先在打开的浏览器中完成京东登录')
+            raise BrowserNotReady('请在 RPA 打开的浏览器中登录并进入咚咚工作台')
+
+    def select_workbench(self):
+        if self.config['transport'] == 'mock':
+            return
+        trusted_pages = []
+        for page in reversed(self.context.pages):
+            if page.is_closed():
+                continue
+            url = urlparse(page.url)
+            if url.scheme == 'https' and url.hostname == 'dongdong.jd.com':
+                trusted_pages.append(page)
+                if page.locator(CONSULTING_TAB).count():
+                    self.page = page
+                    self.page.set_default_timeout(6000)
+                    return
+        if trusted_pages:
+            raise BrowserNotReady('已打开咚咚网站，但尚未识别到客服列表；请确认已进入聊天工作台')
+        raise BrowserNotReady('RPA 浏览器中没有咚咚工作台标签页；请登录后进入 https://dongdong.jd.com/')
+
+    def select_consulting(self):
+        tab = self.page.locator(CONSULTING_TAB)
+        if not tab.count():
+            raise BrowserNotReady('尚未识别到客服列表，请等待工作台加载')
+        if 'c_tabs-tab_check' not in (tab.get_attribute('class') or '').split():
+            tab.click()
+        expect(self.page.locator(ACTIVE_PANE)).to_be_visible()
 
     def customers(self):
+        self.select_workbench()
         self.guard()
-        if not self.page.locator('.c_tabs-tab[title="历史咨询"]').count():
-            raise RuntimeError('等待登录或客服页面加载')
-        self.page.locator('.c_tabs-tab[title="历史咨询"]').click()
-        items = self.page.locator(ROWS).evaluate_all("""rows => rows.map(row => ({
-            name: row.querySelector('.alluser-item-name')?.textContent?.trim() || '',
-            customer_key: row.getAttribute('data-user-id') || '',
-            preview: row.querySelector('.alluser-item-breifdesc')?.textContent || ''
-        })).filter(row => row.name)""")
-        unique = {}
+        self.select_consulting()
+        items = self.collect_contacts()
+        if self.initial_keys is None:
+            self.initial_keys = {item['customer_key'] for item in items}
         for item in items:
-            name = item['name']
-            if name in unique:
-                unique[name] = None
-            else:
-                item['customer_key'] = item['customer_key'] or 'name:' + name
-                unique[name] = item
-        items = [item for item in unique.values() if item]
+            item['initial_history'] = self.config['transport'] != 'mock' and item['customer_key'] in self.initial_keys
         if not items:
             return []
         start = self.cursor % len(items)
@@ -80,8 +172,19 @@ class BrowserAdapter:
 
     def open_customer(self, name):
         self.guard()
-        self.page.locator('.c_tabs-tab[title="历史咨询"]').click()
+        self.select_consulting()
         row = self.page.locator(ROWS).filter(has=self.page.get_by_text(name, exact=True))
+        if self.config['transport'] != 'mock' and row.count() == 0:
+            self.scroll_contacts(top=True)
+            for _ in range(100):
+                if self.cancelled():
+                    raise BrowserNotReady('正在停止会话读取')
+                self.page.wait_for_timeout(150)
+                if row.count():
+                    break
+                move = self.scroll_contacts()
+                if not move['moved']:
+                    break
         expect(row).to_have_count(1)
         current = self.page.locator(HEADER).first.inner_text() if self.page.locator(HEADER).count() else ''
         if current != name:
