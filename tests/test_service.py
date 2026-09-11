@@ -128,7 +128,7 @@ class ServiceCase(unittest.TestCase):
             {'id': 'g1', 'role': 'customer', 'text': '你好'},
             {'id': 'g2', 'role': 'customer', 'text': '客服在吗'},
             {'id': 'g3', 'role': 'customer', 'text': '？？？'},
-            {'id': 'g4', 'role': 'customer', 'text': '不是工作日吗，没人吗'},
+            {'id': 'g4', 'role': 'customer', 'text': '工作日没人吗'},
         ])
         self.db.execute('UPDATE knowledge SET enabled=0')
         graph = self.graph(callback=lambda context: self.fail('问候不应调用模型'))
@@ -271,7 +271,7 @@ class ServiceCase(unittest.TestCase):
         self.assertEqual(self.db.conversation(self.cid)['state'], 'waiting')
         task = self.db.one('SELECT * FROM tasks')
         self.assertEqual(json.loads(task['fields'])['product'], 'TEST-1')
-        self.assertEqual(self.db.one("SELECT reply FROM outbox WHERE source_id='m3'")['reply'], '这个需要进一步确认，我帮您看看，稍等。')
+        self.assertEqual(self.db.one("SELECT reply FROM outbox WHERE source_id='m3'")['reply'], '我帮您看看，稍等。')
 
     def test_confirmed_results_use_customer_service_voice_and_keep_qualifiers(self):
         for original, expected in [

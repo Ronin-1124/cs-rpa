@@ -87,7 +87,7 @@ class Workflow:
             if message['role'] == 'customer':
                 unanswered.append(message['text'])
         greetings = {'你好', '您好', 'hi', 'hello', '在吗', '在不在', '有人吗', '有人在吗',
-                     '客服在吗', '客服呢', '还在吗', '没人吗', '不是工作日吗没人吗'}
+                     '客服在吗', '客服呢', '还在吗', '没人吗', '工作日没人吗'}
         def is_greeting(text):
             compact = re.sub(r'[\s，,。.!！?？~～]', '', text).lower()
             return compact in greetings or (not compact and bool(re.search(r'[?？]', text)))
@@ -131,7 +131,7 @@ class Workflow:
         action = 'reply'
         if intent == 'greeting':
             # A social acknowledgement cannot introduce unsupported product facts.
-            reply = '在的，您想了解哪款产品，或者需要我帮您处理什么问题？'
+            reply = '在的，有什么能帮您的吗？'
         elif intent == 'thanks':
             last_agent = next((m['text'] for m in reversed(state['messages']) if m['role'] == 'agent'), '')
             action, reply = ('ignore', '') if last_agent == THANKS_REPLY else ('reply', THANKS_REPLY)
@@ -159,7 +159,7 @@ class Workflow:
             if plan.get('need_colleague') or intent in ('quote', 'after_sales') or not (set(cited) & known):
                 action = 'handoff'
         if action == 'handoff':
-            reply = '这个需要进一步确认，我帮您看看，稍等。'
+            reply = '我帮您看看，稍等。'
         if state.get('employee_result'):
             # Normalize common affirmative reporting prefixes, preserving the actual conclusion.
             reply = re.sub(r'^同事(?:已经|已|帮您|帮你)?(?:确认了|确认到|提到)[，,：:\s]*(?:我们这边)?',
