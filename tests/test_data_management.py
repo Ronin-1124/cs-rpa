@@ -27,10 +27,12 @@ class DataManagementCase(unittest.TestCase):
         self.cid, _ = self.db.ingest('jingmai', 'test', 'buyer', '测试客户', [self.old])
         self.other, _ = self.db.ingest('jingmai', 'test', 'other', '保留客户', [{'id': 'other-old', 'role': 'customer', 'text': '保留消息'}])
         self.db.prepare_reply(self.cid, 'old', '草稿', 'draft')
-        self.db.create_task(self.cid, 'old', '待确认', {'product': 'TEST'})
+        tid = self.db.create_task(self.cid, 'old', '待确认', {'product': 'TEST'})
+        self.db.execute('INSERT INTO feishu_task_messages VALUES(?,?,?,?)', (tid, 'om_task', 'oc_group', 'cli_fixture'))
+        self.db.execute('INSERT INTO feishu_receipts VALUES(?,?,?,?,?)', ('om_result', tid, 'ou_owner', 'oc_group', 1))
         self.app.knowledge.import_csv('test.csv', '问题,答案\n供电,5V\n')
         self.pid = self.app.settings.save_profile({'name': 'fixture', 'protocol': 'openai', 'model': 'fixture', 'base_url': 'https://example.com/v1', 'api_key': 'secret-test-unique-key'})
-        self.app.settings.save_runtime({'feishu_webhook': 'https://open.feishu.cn/open-apis/bot/v2/hook/secret-hook', 'feishu_secret': 'secret-signature', 'feishu_enabled': True})
+        self.app.settings.save_runtime({'feishu_webhook': 'https://open.feishu.cn/open-apis/bot/v2/hook/secret-hook', 'feishu_secret': 'secret-signature', 'feishu_enabled': True, 'feishu_app_secret': 'secret-feishu-app'})
         with closing(sqlite3.connect(self.root / 'source' / 'checkpoints.sqlite3', check_same_thread=False)) as conn, conn:
             SqliteSaver(conn).setup()
             for cid in (self.cid, self.other):
@@ -43,6 +45,8 @@ class DataManagementCase(unittest.TestCase):
         self.assertEqual(self.db.history(self.cid), [])
         self.assertFalse(self.db.rows('SELECT * FROM tasks'))
         self.assertFalse(self.db.rows('SELECT * FROM outbox'))
+        self.assertFalse(self.db.rows('SELECT * FROM feishu_task_messages'))
+        self.assertFalse(self.db.rows('SELECT * FROM feishu_receipts'))
         with closing(sqlite3.connect(self.root / 'source' / 'checkpoints.sqlite3', check_same_thread=False)) as conn, conn:
             self.assertEqual(conn.execute('SELECT thread_id FROM checkpoints').fetchall(), [(self.other,)])
             self.assertEqual(conn.execute('SELECT thread_id FROM writes').fetchall(), [(self.other,)])
@@ -79,12 +83,19 @@ class DataManagementCase(unittest.TestCase):
                 export_workspace(self.app)
         self.assertTrue(self.db.history(self.cid))
 
+    def test_feishu_receiver_blocks_cleanup_and_export(self):
+        with patch.object(self.app.feishu, 'status', return_value={'running': True}):
+            with self.assertRaisesRegex(ValueError, '断开飞书'):
+                delete_conversations(self.app, self.cid)
+            with self.assertRaisesRegex(ValueError, '断开飞书'):
+                export_workspace(self.app)
+
     def test_export_restore_roundtrip_and_secret_exclusion(self):
         self.app.settings.save_runtime({'mock_url': 'http://127.0.0.1:19999/workbench'})
         data = export_workspace(self.app)
         with zipfile.ZipFile(io.BytesIO(data)) as archive:
             for name in archive.namelist():
-                for secret in (b'secret-test-unique-key', b'secret-hook', b'secret-signature'):
+                for secret in (b'secret-test-unique-key', b'secret-hook', b'secret-signature', b'secret-feishu-app'):
                     self.assertNotIn(secret, archive.read(name))
         package = self.root / 'export.zip'
         package.write_bytes(data)

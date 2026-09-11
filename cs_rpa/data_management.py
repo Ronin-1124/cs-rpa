@@ -19,6 +19,8 @@ MAX_BYTES = 512 * 1024 * 1024
 def require_stopped(app):
     if app.runtime.status()['running']:
         raise ValueError('请先停止接待，并等待浏览器及模型请求结束；暂停不等于停止')
+    if getattr(app, 'feishu', None) and app.feishu.status()['running']:
+        raise ValueError('请先断开飞书连接，再清理或导出数据')
 
 
 def delete_conversations(app, cid=None, *, keep_customer=False, all_customers=False):
@@ -26,7 +28,7 @@ def delete_conversations(app, cid=None, *, keep_customer=False, all_customers=Fa
         raise ValueError('请选择客户')
     db = app.db
     # Prevent start racing the stopped check; mock requests use the same store lock.
-    with app.runtime.lock, db.lock, app.fixture._lock:
+    with app.runtime.lock, app.feishu.lock, db.lock, app.fixture._lock:
         require_stopped(app)
         customers = db.rows('SELECT * FROM conversations') if all_customers else [db.conversation(cid)]
         checkpoint = db.path.parent / 'checkpoints.sqlite3'
@@ -40,6 +42,8 @@ def delete_conversations(app, cid=None, *, keep_customer=False, all_customers=Fa
                     key = customer['id']
                     for row in db.rows('SELECT source_id FROM messages WHERE conversation_id=?', (key,)):
                         db.conn.execute('INSERT OR IGNORE INTO deleted_messages VALUES(?)', (db.deletion_token(key, row['source_id']),))
+                    for table in ('feishu_task_messages', 'feishu_receipts'):
+                        db.conn.execute(f'DELETE FROM {table} WHERE task_id IN (SELECT id FROM tasks WHERE conversation_id=?)', (key,))
                     for table in ('messages', 'outbox', 'tasks'):
                         db.conn.execute(f'DELETE FROM {table} WHERE conversation_id=?', (key,))
                     for table in ('checkpoints', 'writes'):
@@ -71,7 +75,7 @@ def delete_conversations(app, cid=None, *, keep_customer=False, all_customers=Fa
 def export_workspace(app, include_secrets=False):
     if not isinstance(include_secrets, bool):
         raise ValueError('密钥选项必须为布尔值')
-    with app.runtime.lock, app.db.lock, app.fixture._lock, tempfile.TemporaryDirectory() as temp:
+    with app.runtime.lock, app.feishu.lock, app.db.lock, app.fixture._lock, tempfile.TemporaryDirectory() as temp:
         require_stopped(app)
         root = Path(temp)
         business = root / 'business.sqlite3'
@@ -86,7 +90,7 @@ def export_workspace(app, include_secrets=False):
                 row = conn.execute("SELECT value FROM settings WHERE key='runtime'").fetchone()
                 if row:
                     settings = json.loads(row[0])
-                    settings.update(feishu_webhook='', feishu_secret='', feishu_enabled=False)
+                    settings.update(feishu_webhook='', feishu_secret='', feishu_app_secret='', feishu_enabled=False)
                     conn.execute("UPDATE settings SET value=? WHERE key='runtime'", (json.dumps(settings, ensure_ascii=False),))
             conn.commit()
             conn.execute('VACUUM')

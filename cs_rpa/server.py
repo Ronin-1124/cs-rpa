@@ -38,6 +38,9 @@ class Application:
         if adapter_factory:
             kwargs['adapter_factory'] = adapter_factory
         self.runtime = Runtime(self.db, self.settings, self.knowledge, **kwargs)
+        from cs_rpa.feishu import FeishuBridge
+        self.feishu = FeishuBridge(self.db, self.settings)
+        self.runtime.notify = self.feishu.notify
         self.import_root = import_root
         if not self.db.one('SELECT id FROM knowledge LIMIT 1'):
             self.import_project_knowledge()
@@ -68,6 +71,7 @@ class Application:
             'sent': "SELECT count(*) n FROM outbox WHERE status='sent'",
         }.items()}
         return {'version': VERSION, 'runtime': self.runtime.status(), 'counts': counts,
+            'feishu': self.feishu.status(),
             'knowledge_bundle': self.db.setting('knowledge_bundle', {}),
             'config': self.settings.runtime(public=True), 'profiles': self.settings.profiles(),
             'conversations': self.db.rows('SELECT * FROM conversations ORDER BY updated DESC LIMIT 200'),
@@ -76,6 +80,7 @@ class Application:
             'events': self.db.rows('SELECT * FROM events ORDER BY id DESC LIMIT 30')}
 
     def close(self):
+        self.feishu.stop()
         self.runtime.close()
         self.db.close()
 
@@ -164,6 +169,14 @@ class Handler(MockHandler):
 
     def manage(self, path, data):
         app, db = self.app, self.app.db
+        if path.startswith('feishu/'):
+            action = path.split('/')[-1]
+            if action not in ('start', 'stop', 'pair', 'test'):
+                raise ValueError('未知飞书操作')
+            if action == 'test' and data.get('confirm_send') is not True:
+                raise ValueError('请确认向已配置群发送测试通知')
+            result = getattr(app.feishu, action)()
+            return result or app.feishu.status()
         if path == 'data/delete':
             from cs_rpa.data_management import delete_conversations
             if data.get('confirmation') != '删除':
@@ -181,7 +194,10 @@ class Handler(MockHandler):
         if path in ('settings', 'profiles/save', 'profiles/activate') and app.runtime.status()['running']:
             raise ValueError('请先停止运行，再修改配置')
         if path == 'settings':
-            app.settings.save_runtime(data)
+            with app.runtime.lock, app.feishu.lock:
+                if app.runtime.status()['running'] or app.feishu.status()['running']:
+                    raise ValueError('请先停止接待并断开飞书连接，再修改接待设置')
+                app.settings.save_runtime(data)
         elif path == 'profiles/save':
             return {'id': app.settings.save_profile(data)}
         elif path == 'profiles/activate':

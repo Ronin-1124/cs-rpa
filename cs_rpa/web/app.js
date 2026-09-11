@@ -37,6 +37,7 @@ function render(){
   setHTML($('#events'),state.events.length?state.events.map(e=>`<div class="event"><span class="event-dot"></span><div><p>${esc(e.text)}</p><small>${date(e.created)}</small></div></div>`).join(''):empty('运行记录将在这里显示','开始接待后，可以在这里查看异常与恢复信息。','activity'));
   renderReplies();renderConversations();renderTasks();renderProfiles();
   if(!initialized){fillSettings();if(active)fillProfile(active);else fillProfile();initialized=true;}
+  renderFeishu();
   if(activeView==='conversations')loadHistory();
   hydrate();
 }
@@ -84,11 +85,12 @@ function fillSettings(){
   const form=$('#settings-form');
   for(const [key,value] of Object.entries(state.config)){
     const input=form.elements.namedItem(key);if(!input)continue;
-    if(input.type==='checkbox')input.checked=Boolean(value);else input.value=value;
+    if(input.type==='checkbox')input.checked=Boolean(value);else input.value=Array.isArray(value)?value.join('\n'):value;
   }
   form.elements.feishu_webhook.placeholder=state.config.has_feishu_webhook?'已保存，留空保留':'填写机器人 Webhook';
   form.elements.feishu_secret.placeholder=state.config.has_feishu_secret?'已保存，留空保留':'可选：机器人签名密钥';
-  updateReception();
+  form.elements.feishu_app_secret.placeholder=state.config.has_feishu_app_secret?'已保存，留空保留':'填写应用 App Secret';
+  updateReception();updateFeishu();
   $('#custom-fields').innerHTML=Object.entries(fields).map(([key,label])=>`<label><input type="checkbox" name="custom_field" value="${key}" ${state.config.custom_fields.includes(key)?'checked':''}>${label}</label>`).join('');
 }
 async function loadKnowledge(){
@@ -123,7 +125,7 @@ document.addEventListener('click',e=>{
 document.addEventListener('input',e=>{if(e.target.dataset.edit)edits.set(e.target.dataset.edit,e.target.value);if(e.target.dataset.result)taskResults.set(e.target.dataset.result,e.target.value);});
 $('#profile-form').addEventListener('submit',e=>{e.preventDefault();perform($('button[type=submit]',e.target),async()=>{const data=Object.fromEntries(new FormData(e.target));const saved=await api('profiles/save',data);e.target.elements.id.value=saved.id;e.target.elements.api_key.value='';e.target.elements.api_key.required=false;toast('模型连接已保存');});});
 $('#new-profile').addEventListener('click',()=>fillProfile());
-$('#settings-form').addEventListener('submit',e=>{e.preventDefault();perform($('button[type=submit]',e.target),async()=>{const form=new FormData(e.target);const data=Object.fromEntries(form);data.custom_fields=form.getAll('custom_field');data.feishu_enabled=e.target.elements.feishu_enabled.checked;delete data.custom_field;await api('settings',data);e.target.elements.feishu_webhook.value='';e.target.elements.feishu_secret.value='';toast('接待设置已保存，下次启动生效');});});
+$('#settings-form').addEventListener('submit',e=>{e.preventDefault();perform($('button[type=submit]',e.target),async()=>{const form=new FormData(e.target);const data=Object.fromEntries(form);data.custom_fields=form.getAll('custom_field');data.feishu_enabled=e.target.elements.feishu_enabled.checked;data.feishu_allow_private=e.target.elements.feishu_allow_private.checked;for(const key of ['feishu_allowed_users','feishu_allowed_chats'])data[key]=parseIDs(data[key]);delete data.custom_field;await api('settings',data);for(const key of ['feishu_webhook','feishu_secret','feishu_app_secret'])e.target.elements[key].value='';toast('接待设置已保存，下次连接或启动生效');});});
 $('#import-project').addEventListener('click',e=>perform(e.currentTarget,async()=>{const data=await api('knowledge/import-project',{});toast(data.results.map(r=>r.error?`${r.file}：${r.error}`:`${r.file}：新增 ${r.inserted}，重复 ${r.duplicates}`).join('；')||'data/raw/ 中没有 CSV 文件');await loadKnowledge();}));
 $('#csv-file').addEventListener('change',async e=>{const file=e.target.files[0];if(!file)return;try{if(file.size>4000000)throw new Error('请选择 4 MB 以内的文件');const bytes=await file.arrayBuffer();let text;try{text=new TextDecoder('utf-8',{fatal:true}).decode(bytes);}catch{text=new TextDecoder('gb18030').decode(bytes);}const data=await api('knowledge/import',{filename:file.name,text});toast(`新增 ${data.inserted} 条，跳过 ${data.duplicates} 条重复记录。`);await refresh();await loadKnowledge();}catch(err){toast(err.message,true);}finally{e.target.value='';}});
 let searchTimer;$('#knowledge-search').addEventListener('input',()=>{clearTimeout(searchTimer);searchTimer=setTimeout(loadKnowledge,250);});
@@ -136,7 +138,7 @@ hydrate();
 let deletionRequest=null;
 document.addEventListener('click',e=>{
   const button=e.target.closest('[data-delete]');if(!button)return;
-  if(state.runtime.running){toast('请先停止接待并等待结束，再清理数据。',true);return;}
+  if(state.runtime.running||state.feishu?.running){toast('请先停止接待并断开飞书连接，再清理数据。',true);return;}
   const action=button.dataset.delete;
   deletionRequest={action,id:action==='delete_all'?undefined:selectedCustomer};
   const name=state.conversations.find(c=>c.id===selectedCustomer)?.name||'';
@@ -166,6 +168,41 @@ function updateReception(){
   $('#mock-address').hidden=real;$('#real-address').hidden=!real;
   $('#source-description').textContent=real?'打开京麦工作台，登录后读取正在咨询。':'使用本机模拟工作台接收测试咨询。';
   $('#mode-description').textContent=auto?'由 RPA 填入回复、点击发送，并核对发送结果。':'由 RPA 填入网页输入框，保留草稿，不点击发送。';
-  $('#reception-summary').textContent=(real?'真实页面 · 京东京麦':'模拟页面')+' / '+(auto?'自动发送':'填写草稿')+' · 回复方式独立于页面来源';
+  $('#reception-summary').textContent=(real?'真实页面 · 京东京麦':'模拟页面')+' / '+(auto?'自动发送':'填写草稿');
 }
 $('#settings-form').addEventListener('change',updateReception);
+
+function parseIDs(value){return [...new Set(String(value||'').split(/[\s,，]+/).filter(Boolean))];}
+function updateFeishu(){
+  const app=$('#settings-form').elements.feishu_mode.value==='app';
+  $('#feishu-app-fields').hidden=!app;$('#feishu-webhook-fields').hidden=app;
+}
+function renderFeishu(){
+  const info=state.feishu||{running:false,discovered:[]};
+  $('#feishu-status').textContent=info.detail||'飞书协作未连接';
+  $('[data-feishu="start"]').disabled=info.running;
+  $('[data-feishu="stop"]').disabled=!info.running;
+  $('[data-feishu="pair"]').disabled=info.state!=='connected';
+  setHTML($('#feishu-discovered'),info.discovered.map((d,i)=>`<div class="feishu-identity"><b>已识别${d.chat_type==='p2p'?'私聊':'群聊'}中的员工</b><p>用户：<code>${esc(d.user_id)}</code></p><p>会话：<code>${esc(d.chat_id)}</code></p><button type="button" class="button secondary" data-feishu-adopt="${i}">填入白名单和通知会话</button></div>`).join(''));
+  if(info.discovered.length)$('#feishu-pairing').hidden=true;
+}
+$('#settings-form').addEventListener('change',updateFeishu);
+document.addEventListener('click',e=>{
+  const button=e.target.closest('button');if(!button)return;
+  if(button.dataset.feishu)perform(button,async()=>{
+    const action=button.dataset.feishu,result=await api('feishu/'+action,action==='test'?{confirm_send:true}:{});
+    if(action==='pair'){
+      $('#feishu-pairing').textContent='请在目标飞书会话中发给机器人：'+result.command+'（群内需 @机器人，5 分钟内有效）。识别后核对 ID，再保存白名单。';
+      $('#feishu-pairing').hidden=false;
+    }else if(action==='test')toast(result.detail);
+  }).finally(()=>{if(state)renderFeishu();});
+  if(button.hasAttribute('data-feishu-adopt')){
+    const d=state.feishu.discovered[Number(button.dataset.feishuAdopt)];if(!d)return;
+    const form=$('#settings-form');
+    form.elements.feishu_allowed_users.value=[...new Set([...parseIDs(form.elements.feishu_allowed_users.value),d.user_id])].join('\n');
+    form.elements.feishu_allowed_chats.value=[...new Set([...parseIDs(form.elements.feishu_allowed_chats.value),d.chat_id])].join('\n');
+    form.elements.feishu_chat_id.value=d.chat_id;
+    if(d.chat_type==='p2p')form.elements.feishu_allow_private.checked=true;
+    toast('已填入。请断开连接，启用待办协作并保存设置，然后重新连接。');
+  }
+});

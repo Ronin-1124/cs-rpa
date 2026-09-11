@@ -5,6 +5,7 @@ import tempfile
 import threading
 import time
 from pathlib import Path
+from unittest.mock import Mock
 
 from playwright.sync_api import expect, sync_playwright
 
@@ -155,6 +156,24 @@ def main():
                         expect(page.locator('#settings-form button[type=submit]')).to_be_enabled()
                 page.evaluate('window.scrollTo(0,0)')
                 page.screenshot(path=str(output / 'reception-settings.png'), full_page=True)
+                page.locator('[name=feishu_mode]').select_option('app')
+                expect(page.locator('#feishu-app-fields')).to_be_visible()
+                expect(page.locator('#feishu-webhook-fields')).not_to_be_visible()
+                page.locator('[name=feishu_app_id]').fill('cli_fixture')
+                page.locator('[name=feishu_app_secret]').fill('secret-feishu-fixture')
+                page.locator('[name=feishu_allowed_users]').fill('ou_owner\nou_owner')
+                page.locator('[name=feishu_allowed_chats]').fill('oc_group')
+                page.locator('[name=feishu_chat_id]').fill('oc_group')
+                page.locator('#settings-form button[type=submit]').click()
+                expect(page.locator('[name=feishu_app_secret]')).to_have_value('')
+                assert app.settings.runtime()['feishu_allowed_users'] == ['ou_owner']
+                page.screenshot(path=str(output / 'feishu-settings.png'), full_page=True)
+                page.set_viewport_size({'width': 390, 'height': 844})
+                assert page.evaluate('document.documentElement.scrollWidth <= innerWidth'), 'Feishu settings overflow mobile'
+                page.set_viewport_size({'width': 1440, 'height': 1000})
+                page.locator('[name=feishu_mode]').select_option('webhook')
+                page.locator('#settings-form button[type=submit]').click()
+                expect(page.locator('#settings-form button[type=submit]')).to_be_enabled()
                 page.locator('[data-view="knowledge"]').click()
                 page.locator('#add-knowledge').click()
                 page.locator('#knowledge-form [name=title]').fill('TEST-1供电电压是多少')
@@ -197,8 +216,23 @@ def main():
                 page.locator('[data-view=tasks]').click()
                 expect(page.locator('[data-result]')).to_be_visible(timeout=120000)
                 page.screenshot(path=str(output / 'tasks.png'), full_page=True)
-                page.locator('[data-result]').fill('同事已确认可以定制外壳。\n\n请您提供尺寸图纸。')
-                page.locator('[data-resolve]').click()
+                if args.live_model:
+                    page.locator('[data-result]').fill('同事已确认可以定制外壳。\n\n请您提供尺寸图纸。')
+                    page.locator('[data-resolve]').click()
+                else:
+                    # Exercise the same RPA resume path with a scoped Feishu result;
+                    # only the external Feishu transport is replaced here.
+                    app.feishu.api = Mock()
+                    app.feishu.api.send.return_value = 'om_smoke_task'
+                    app.feishu.bot, app.feishu.state = 'ou_bot', 'connected'
+                    app.settings.save_runtime({'feishu_mode': 'app', 'feishu_enabled': True})
+                    expect(page.locator('#task-list')).to_contain_text('飞书通知：已发送', timeout=15000)
+                    event = {'message_id': 'om_smoke_reply', 'sender_id': 'ou_owner', 'sender_type': 'user',
+                        'chat_id': 'oc_group', 'chat_type': 'group', 'message_type': 'text',
+                        'parent_id': 'om_smoke_task', 'mentions': [],
+                        'content': json.dumps({'text': '同事已确认可以定制外壳。\n\n请您提供尺寸图纸。'})}
+                    assert app.feishu.handle(event)
+                    assert app.feishu.handle(event) is None
                 expect(page.locator('#task-list .badge').first).to_have_text('已完成', timeout=120000)
                 page.locator('[data-view=overview]').click()
                 expect(page.locator('#outbox textarea').first).to_contain_text('图纸', timeout=15000)
@@ -209,7 +243,8 @@ def main():
                 expect(page.locator('#runtime-title')).to_have_text('服务已就绪', timeout=30000)
                 assert not app.runtime.status()['running']
                 if not args.live_model:
-                    app.settings.save_runtime({'mode': 'auto'})
+                    app.settings.save_runtime({'mode': 'auto', 'feishu_mode': 'webhook', 'feishu_enabled': False})
+                    app.feishu.state = 'stopped'
                     control.locator('#inbound [name=text]').fill('TEST-1使用什么供电电压？')
                     control.locator('#inbound button[type=submit]').click()
                     page.locator('#start').click()

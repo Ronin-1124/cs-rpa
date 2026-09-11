@@ -50,6 +50,10 @@ class Database:
             CREATE TABLE IF NOT EXISTS events(id INTEGER PRIMARY KEY AUTOINCREMENT,
                 kind TEXT, text TEXT, created REAL);
             CREATE TABLE IF NOT EXISTS deleted_messages(token TEXT PRIMARY KEY);
+            CREATE TABLE IF NOT EXISTS feishu_task_messages(task_id TEXT PRIMARY KEY REFERENCES tasks(id),
+                message_id TEXT UNIQUE,chat_id TEXT,app_id TEXT);
+            CREATE TABLE IF NOT EXISTS feishu_receipts(message_id TEXT PRIMARY KEY,task_id TEXT,
+                sender_id TEXT,chat_id TEXT,created REAL);
             CREATE TABLE IF NOT EXISTS knowledge_materials(id TEXT PRIMARY KEY,
                 kind TEXT, status TEXT, payload TEXT, batch TEXT);
             CREATE VIRTUAL TABLE IF NOT EXISTS knowledge_fts USING fts5(title,body);

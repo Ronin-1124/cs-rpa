@@ -15,6 +15,9 @@ DEFAULTS = {
     'channel': 'msedge', 'poll_seconds': 2, 'merge_seconds': 2, 'max_sessions': 100,
     'custom_fields': ['product', 'requirements', 'quantity', 'deadline', 'contact'],
     'feishu_webhook': '', 'feishu_secret': '', 'feishu_enabled': False,
+    'feishu_mode': 'webhook', 'feishu_app_id': '', 'feishu_app_secret': '',
+    'feishu_chat_id': '', 'feishu_allowed_users': [], 'feishu_allowed_chats': [],
+    'feishu_allow_private': False,
 }
 FIELD_LABELS = {'product': '产品型号', 'requirements': '定制内容', 'quantity': '数量',
                 'deadline': '期望交期', 'contact': '联系方式', 'company': '公司或称呼'}
@@ -38,13 +41,14 @@ class Settings:
         if public:
             config['has_feishu_webhook'] = bool(config.pop('feishu_webhook', ''))
             config['has_feishu_secret'] = bool(config.pop('feishu_secret', ''))
+            config['has_feishu_app_secret'] = bool(config.pop('feishu_app_secret', ''))
         return config
 
     def save_runtime(self, data):
         config = self.runtime()
         for key in DEFAULTS:
             if key in data:
-                if key in ('feishu_webhook', 'feishu_secret') and not data[key]:
+                if key in ('feishu_webhook', 'feishu_secret', 'feishu_app_secret') and not data[key]:
                     continue
                 config[key] = data[key]
         if config['transport'] not in ('mock', 'jingmai') or config['mode'] not in ('draft', 'auto'):
@@ -71,6 +75,22 @@ class Settings:
                 raise ValueError('请填写飞书自定义机器人 Webhook 地址')
         if not isinstance(config['feishu_enabled'], bool):
             raise ValueError('通知开关无效')
+        if config['feishu_mode'] not in ('webhook', 'app') or not isinstance(config['feishu_allow_private'], bool):
+            raise ValueError('飞书接入方式无效')
+        for key, prefix in (('feishu_allowed_users', 'ou_'), ('feishu_allowed_chats', 'oc_')):
+            values = config[key]
+            if not isinstance(values, list) or len(values) > 100 or any(not isinstance(v, str) or not v.startswith(prefix) or not v.replace('_', '').isalnum() for v in values):
+                raise ValueError('请填写有效的飞书用户或群聊 ID 列表')
+            config[key] = list(dict.fromkeys(values))
+        for key in ('feishu_app_id', 'feishu_app_secret', 'feishu_chat_id'):
+            if not isinstance(config[key], str) or len(config[key]) > 256:
+                raise ValueError('飞书应用配置格式错误')
+            config[key] = config[key].strip()
+        if config['feishu_mode'] == 'app' and config['feishu_enabled']:
+            if not config['feishu_app_id'].startswith('cli_') or not config['feishu_app_secret']:
+                raise ValueError('请先填写飞书 App ID 和 App Secret')
+            if config['feishu_chat_id'] not in config['feishu_allowed_chats'] or not config['feishu_allowed_users']:
+                raise ValueError('请将通知会话加入允许列表，并至少指定一位允许的员工')
         self.db.set_setting('runtime', config)
 
     def profiles(self):

@@ -65,11 +65,25 @@
           <details class="reception-advanced"><summary>读取与消息合并</summary><div class="form-row thirds"><label>扫描间隔（秒）<input name="poll_seconds" type="number" min="1" max="60"></label><label>消息合并等待（秒）<input name="merge_seconds" type="number" min="0" max="20"></label><label>每轮客户上限<input name="max_sessions" type="number" min="1" max="500"></label></div></details>
         </div></article>
         <article class="panel"><div class="panel-heading"><h2>定制需求收集</h2></div><div class="form"><p class="muted">收集以下信息后，创建同事待办。已提供的信息不会重复询问。</p><div id="custom-fields" class="checkbox-grid"></div><div class="persona-note"><i data-lucide="user-round-check"></i><div><b>客服同事的沟通方式</b><p>自然、温和、简洁地处理业务。以“我”或“这边”自然回应，查询与通知结果以实际执行记录为准。</p></div></div></div></article>
-        <article class="panel"><div class="panel-heading"><h2>飞书通知</h2><label class="switch-label"><input name="feishu_enabled" type="checkbox">启用通知</label></div><div class="form"><label>机器人 Webhook<input name="feishu_webhook" type="password" autocomplete="new-password" placeholder="未配置，留空保留已有设置"></label><label>签名密钥（可选）<input name="feishu_secret" type="password" autocomplete="new-password" placeholder="留空保留已有设置"></label><p class="help-note">启用后，新建待办会推送到此机器人。处理结果目前在“同事待办”页面填写。</p></div></article><div class="settings-save"><button class="button primary" type="submit"><i data-lucide="save"></i>保存接待设置</button></div></form>
+        <article class="panel"><div class="panel-heading"><h2>飞书协作</h2><label class="switch-label"><input name="feishu_enabled" type="checkbox">启用待办协作</label></div><div class="form">
+          <label>接入方式<select name="feishu_mode"><option value="webhook">自定义机器人 · 单向通知</option><option value="app">应用机器人 · 双向协作</option></select></label>
+          <div id="feishu-webhook-fields" class="form-stack"><label>机器人 Webhook<input name="feishu_webhook" type="password" autocomplete="new-password" placeholder="未配置，留空保留已有设置"></label><label>签名密钥（可选）<input name="feishu_secret" type="password" autocomplete="new-password" placeholder="留空保留已有设置"></label><p class="help-note">推送新建待办，处理结果在“同事待办”页面填写。</p></div>
+          <div id="feishu-app-fields" class="form-stack" hidden>
+            <div class="form-row"><label>App ID<input name="feishu_app_id" placeholder="cli_…" autocomplete="off"></label><label>App Secret<input name="feishu_app_secret" type="password" autocomplete="new-password" placeholder="留空保留已有密钥"></label></div>
+            <p class="help-note">先保存应用凭据，再连接飞书、识别本人及通知会话。完成白名单后启用待办协作。更改配置前需停止接待并断开飞书。</p>
+            <div class="feishu-connection"><span id="feishu-status" role="status">飞书协作未连接</span><div class="card-actions"><button type="button" class="button primary" data-feishu="start">连接飞书</button><button type="button" class="button secondary" data-feishu="stop">断开连接</button><button type="button" class="button secondary" data-feishu="pair">识别本人和会话</button></div></div>
+            <div id="feishu-pairing" class="reception-summary" hidden></div><div id="feishu-discovered"></div>
+            <label>通知会话 ID<input name="feishu_chat_id" placeholder="oc_…"><small>可以是指定群聊，也可以是你与应用机器人的私聊。</small></label>
+            <div class="form-row"><label>允许处理的员工<textarea name="feishu_allowed_users" rows="3" placeholder="ou_…，每行一个" aria-label="允许处理的员工"></textarea><small>只接受这些员工的处理结果。</small></label><label>允许的会话<textarea name="feishu_allowed_chats" rows="3" placeholder="oc_…，每行一个" aria-label="允许的会话"></textarea><small>通知会话也需要在此列表中。</small></label></div>
+            <label class="switch-label"><input name="feishu_allow_private" type="checkbox">允许在白名单私聊中处理待办</label>
+            <p class="help-note">群内请回复待办消息并 @机器人，或发送“@机器人 处理 待办编号 确认结果”。当前只处理待办反馈，普通聊天不会调用模型。收到结果后，客服按接待设置填写草稿或自动发送。</p>
+            <div><button type="button" class="button secondary" data-feishu="test">发送测试通知</button><p class="help-note">发到已保存的通知会话，不包含客户资料。</p></div>
+          </div>
+        </div></article><div class="settings-save"><button class="button primary" type="submit"><i data-lucide="save"></i>保存接待设置</button></div></form>
       </section>
       <section class="view" id="view-data" hidden>
         <div class="page-heading"><div><p class="eyebrow">WORKSPACE DATA</p><h1>数据管理</h1><p>管理本机客户记录，导出工作空间并迁移到另一台设备。</p></div></div>
-        <p class="help-note">操作前请在运行总览停止接待，等待浏览器和模型请求结束。</p>
+        <p class="help-note">操作前请在运行总览停止接待，等待浏览器和模型请求结束，并在接待设置中断开飞书连接。</p>
         <div class="settings-layout">
           <article class="panel"><div class="panel-heading"><h2>导出与迁移</h2></div><div class="form">
             <p>导出客户、聊天、草稿、待办、业务知识、接待配置及模拟记录。流程等待进度一并保存。</p>

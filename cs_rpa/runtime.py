@@ -28,6 +28,7 @@ class Runtime:
         self.generation = 0
         self.baseline_count = 0
         self.drafted = {}
+        self.notify = lambda task: notify_task(self.db, self.settings, task)
 
     def status(self):
         with self.lock:
@@ -197,7 +198,7 @@ class Runtime:
                     for task in self.db.rows("SELECT * FROM tasks WHERE status='open' AND notification='pending'"):
                         if self.stop_event.is_set():
                             break
-                        notify_task(self.db, self.settings, task)
+                        self.notify(task)
                 self.stop_event.wait(config['poll_seconds'])
         except Exception:
             fatal_error = True
